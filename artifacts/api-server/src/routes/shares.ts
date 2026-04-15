@@ -1,0 +1,301 @@
+import { Router, type IRouter, type Request, type Response } from "express";
+import {
+  createShare,
+  getShare,
+  markAccessed,
+  deleteShare,
+  fireWebhook,
+  getAvailableMemoryMb,
+} from "../services/shareManager.js";
+import { checkRateLimit } from "../services/rateLimiter.js";
+import {
+  CreateShareBody,
+  GetShareParams,
+  DeleteShareParams,
+  PeekShareParams,
+  TestWebhookBody,
+} from "@workspace/api-zod";
+
+const router: IRouter = Router();
+
+const MAX_SHARE_SIZE_BYTES = 2.5 * 1024 * 1024; // 2.5 MB
+const MIN_MEMORY_MB = 10; // Require at least 10 MB free
+
+const HUMOROUS_ERRORS = [
+  "We can't find what you're looking for",
+  "No droids here",
+  "There is no cake",
+  "This share has evaporated",
+  "The data has left the building",
+  "404: Share not found in this dimension",
+  "Whatever you're looking for, it isn't here",
+];
+
+function randomHumorous(): string {
+  return HUMOROUS_ERRORS[Math.floor(Math.random() * HUMOROUS_ERRORS.length)];
+}
+
+function getClientIp(req: Request): string {
+  const forwarded = req.headers["x-forwarded-for"];
+  if (typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
+  }
+  return req.socket?.remoteAddress ?? "unknown";
+}
+
+// POST /api/shares — create a share
+router.post("/shares", async (req: Request, res: Response) => {
+  const ip = getClientIp(req);
+  const rateLimit = checkRateLimit(ip);
+  if (!rateLimit.allowed) {
+    res.status(429).json({
+      error: "rate_limit_exceeded",
+      message: "We're busy right now. Please wait.",
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
+    return;
+  }
+
+  const parsed = CreateShareBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "validation_error",
+      message: parsed.error.issues
+        .map((i) => i.message)
+        .join(", "),
+    });
+    return;
+  }
+
+  const body = parsed.data;
+
+  if (body.totalSize > MAX_SHARE_SIZE_BYTES) {
+    res.status(413).json({
+      error: "payload_too_large",
+      message: "Total payload exceeds 2.5 MB limit",
+    });
+    return;
+  }
+
+  if (body.fileMetadata && body.fileMetadata.length > 10) {
+    res.status(400).json({
+      error: "too_many_files",
+      message: "Maximum 10 files per share",
+    });
+    return;
+  }
+
+  const availableMb = getAvailableMemoryMb();
+  if (availableMb < MIN_MEMORY_MB) {
+    res.status(507).json({
+      error: "insufficient_memory",
+      message: "Platform is busy. Please try again later.",
+    });
+    return;
+  }
+
+  const share = createShare({
+    encryptedData: body.encryptedData,
+    ttl: body.ttl,
+    passwordHash: body.passwordHash,
+    passwordSalt: body.passwordSalt,
+    webhookUrl: body.webhookUrl,
+    webhookMessage: body.webhookMessage,
+    fileMetadata: body.fileMetadata as typeof body.fileMetadata,
+    shareType: body.shareType,
+    totalSize: body.totalSize,
+  });
+
+  res.status(201).json({
+    shareId: share.id,
+    expiresAt: new Date(share.expiresAt).toISOString(),
+  });
+});
+
+// GET /api/shares/:shareId/peek — peek without consuming
+router.get("/shares/:shareId/peek", (req: Request, res: Response) => {
+  const { shareId } = req.params;
+
+  const share = getShare(shareId);
+
+  if (!share) {
+    res.status(404).json({
+      error: "not_found",
+      message: "Share not found or expired",
+      humorousMessage: randomHumorous(),
+    });
+    return;
+  }
+
+  const now = Date.now();
+  if (now > share.expiresAt) {
+    deleteShare(shareId);
+    res.status(410).json({
+      error: "expired",
+      message: "Share has expired",
+      humorousMessage: "No droids here",
+    });
+    return;
+  }
+
+  if (share.accessed) {
+    res.status(410).json({
+      error: "already_accessed",
+      message: "Share already accessed",
+      humorousMessage: "There is no cake",
+    });
+    return;
+  }
+
+  res.json({
+    totalSize: share.totalSize,
+    passwordRequired: share.passwordHash !== null,
+    shareType: share.shareType,
+    fileCount: share.fileMetadata?.length ?? 0,
+    expiresAt: new Date(share.expiresAt).toISOString(),
+  });
+});
+
+// GET /api/shares/:shareId — retrieve and mark accessed
+router.get("/shares/:shareId", (req: Request, res: Response) => {
+  const { shareId } = req.params;
+
+  const share = getShare(shareId);
+
+  if (!share) {
+    res.status(404).json({
+      error: "not_found",
+      message: "Share not found or expired",
+      humorousMessage: randomHumorous(),
+    });
+    return;
+  }
+
+  const now = Date.now();
+  if (now > share.expiresAt) {
+    deleteShare(shareId);
+    res.status(410).json({
+      error: "expired",
+      message: "Share has expired",
+      humorousMessage: "No droids here",
+    });
+    return;
+  }
+
+  if (share.accessed) {
+    res.status(410).json({
+      error: "already_accessed",
+      message: "Share has already been accessed",
+      humorousMessage: "There is no cake",
+    });
+    return;
+  }
+
+  markAccessed(shareId);
+
+  res.json({
+    encryptedData: share.encryptedData,
+    fileMetadata: share.fileMetadata,
+    passwordRequired: share.passwordHash !== null,
+    passwordSalt: share.passwordSalt,
+    shareType: share.shareType,
+    totalSize: share.totalSize,
+    webhookUrl: share.webhookUrl,
+    webhookMessage: share.webhookMessage,
+  });
+});
+
+// DELETE /api/shares/:shareId — delete after download complete
+router.delete("/shares/:shareId", async (req: Request, res: Response) => {
+  const { shareId } = req.params;
+
+  const share = getShare(shareId);
+
+  if (!share) {
+    res.status(404).json({
+      error: "not_found",
+      message: "Share not found",
+    });
+    return;
+  }
+
+  // Fire webhook if configured
+  if (share.webhookUrl) {
+    fireWebhook(share.webhookUrl, share.webhookMessage ?? undefined).catch(
+      () => {}
+    );
+  }
+
+  deleteShare(shareId);
+
+  res.json({
+    success: true,
+    message: "Share deleted successfully",
+  });
+});
+
+// POST /api/webhook/test
+router.post("/webhook/test", async (req: Request, res: Response) => {
+  const parsed = TestWebhookBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "validation_error",
+      message: "Invalid request body",
+    });
+    return;
+  }
+
+  const { webhookUrl } = parsed.data;
+
+  // Validate URL
+  let url: URL;
+  try {
+    url = new URL(webhookUrl);
+  } catch {
+    res.status(400).json({
+      error: "invalid_url",
+      message: "Invalid webhook URL format",
+    });
+    return;
+  }
+
+  if (url.protocol !== "https:") {
+    res.status(400).json({
+      error: "invalid_url",
+      message: "Webhook URL must use HTTPS",
+    });
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "VaultDrop webhook test",
+        timestamp: new Date().toISOString(),
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    res.json({
+      success: true,
+      statusCode: response.status,
+      message: `Webhook responded with status ${response.status}`,
+    });
+  } catch (err) {
+    res.status(200).json({
+      success: false,
+      statusCode: null,
+      message:
+        err instanceof Error ? err.message : "Webhook test failed",
+    });
+  }
+});
+
+export default router;

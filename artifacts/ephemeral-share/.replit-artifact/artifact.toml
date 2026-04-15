@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Secure Ephemeral Share"
+version = "1.0.0"
+id = "artifacts/ephemeral-share"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 25837
+
+[services.development]
+run = "pnpm --filter @workspace/ephemeral-share run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ephemeral-share", "run", "build" ]
+publicDir = "artifacts/ephemeral-share/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "25837"
+BASE_PATH = "/"

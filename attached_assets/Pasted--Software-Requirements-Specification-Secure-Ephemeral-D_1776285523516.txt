@@ -1,0 +1,1257 @@
+# Software Requirements Specification
+## Secure Ephemeral Data Exchange Platform
+
+**Document Version:** 1.0  
+**Date:** April 15, 2026  
+**Status:** Final  
+
+---
+
+## Table of Contents
+
+1. [Executive Summary](#executive-summary)
+2. [Scope](#scope)
+3. [Functional Requirements](#functional-requirements)
+4. [Non-Functional Requirements](#non-functional-requirements)
+5. [Security Requirements](#security-requirements)
+6. [User Interface & Experience](#user-interface--experience)
+7. [Technical Architecture](#technical-architecture)
+8. [Data Flow](#data-flow)
+9. [Error Handling & Edge Cases](#error-handling--edge-cases)
+10. [Constraints & Assumptions](#constraints--assumptions)
+11. [Acceptance Criteria](#acceptance-criteria)
+
+---
+
+## Executive Summary
+
+The Secure Ephemeral Data Exchange Platform is a Node.js web application designed to facilitate the secure, anonymous exchange of sensitive data between two parties (Sender and Receiver) without any persistence on the server. The platform employs end-to-end encryption using ChaCha20-Poly1305 at the client-side, ensuring that the server never has access to plaintext data. All data is automatically deleted after single-access retrieval or upon TTL expiration, with zero logging or audit trails maintained.
+
+**Key Characteristics:**
+- Memory-only operation (no database persistence)
+- Client-side encryption (ChaCha20-Poly1305)
+- Anonymous, ephemeral users (no accounts)
+- One-time access for both sender and receiver
+- Configurable TTL (1m, 15m, 1h, 36h, 1d, 4d max)
+- Optional webhook notifications (fire-and-forget)
+- Advanced CAPTCHA protection (hCaptcha)
+- PWA-capable for mobile
+- Dark/Light mode
+- WCAG 2.1 AA accessibility compliance
+
+---
+
+## Scope
+
+### In Scope
+
+1. **Sender Functionality:**
+   - Upload up to 10 files (max 2.5 MB total per share)
+   - Paste text content (markdown-supported, sanitized)
+   - Preview files before link generation
+   - Set TTL (1m, 15m, 1h, 36h, 1d, 4d)
+   - Optional password protection (14-256 characters, auto-generated or custom)
+   - Optional webhook notification with custom message template
+   - Animated TTL countdown display after link generation
+   - Create new container/share
+
+2. **Receiver Functionality:**
+   - Access share via link (one-time only)
+   - View total container size before committing
+   - Download files individually or as ZIP archive
+   - Copy text to clipboard (for text-only shares)
+   - See animated progress indicators per file
+   - Automatic data deletion after access or window close
+
+3. **Security & Infrastructure:**
+   - HTTP/2 with TLS/HTTPS enforcement
+   - All security headers (HSTS, CSP, X-Frame-Options, X-Content-Type-Options)
+   - Client-side encryption (ChaCha20-Poly1305)
+   - Optional password-based decryption (additional layer)
+   - Rate limiting (3 shares per minute per unique IP)
+   - Advanced CAPTCHA on every share creation (hCaptcha)
+   - Health check endpoint with random API key
+   - Debug mode (terminal logging only when enabled)
+
+### Out of Scope
+
+1. User accounts or authentication
+2. Persistent data storage
+3. Server-side logging or audit trails
+4. Email notifications
+5. File type restrictions
+6. Share revocation/cancellation
+7. Multiple language support (English only)
+8. Browser fallbacks for Web Crypto API
+
+---
+
+## Functional Requirements
+
+### FR-1: Sender - File Upload & Text Input
+
+**FR-1.1:** The application shall provide two separate UI tabs: "Text Mode" and "File Mode"
+
+**FR-1.2:** In File Mode, the sender shall:
+- Upload up to 10 files via file picker
+- Upload files via drag-and-drop into designated area
+- See individual per-file progress indicators during bulk upload
+- View 200x300px rescaled previews for image files
+- View file icons for non-image files (PDFs, documents, etc.)
+- See file name, size, and type for each uploaded file
+- Rename files at any point before link generation
+- Reorder files via drag-and-drop
+- Delete individual files before link generation
+- Add or modify files until link generation
+
+**FR-1.3:** In Text Mode, the sender shall:
+- Paste or type text content
+- Use markdown formatting (basic syntax)
+- See a character counter and data size indicator (e.g., "1,250 chars / 0.5 MB")
+- All inputs shall be sanitized to prevent HTML/script injection
+
+**FR-1.4:** Maximum constraints:
+- Total payload per share: 2.5 MB
+- Max 10 files per share
+- Max 256 characters for password (if set)
+- Min 14 characters for password (if set)
+
+**FR-1.5:** If memory situation does not allow upload, the sender shall be prevented from uploading new files with a clear warning message
+
+### FR-2: Sender - Password & Encryption Setup
+
+**FR-2.1:** The application shall auto-generate a human-memorizable password each time the sender loads the form
+
+**FR-2.2:** The auto-generated password shall:
+- Be 14-256 characters
+- Be displayed by default (not masked)
+- Be copyable independently from the share link
+- Be optional (sender can disable password protection)
+- Be overridable by sender with custom password
+
+**FR-2.3:** Password protection shall be enabled by default
+
+**FR-2.4:** The sender shall see a convenience function to auto-generate a new password at any time before link generation
+
+### FR-3: Sender - TTL Configuration
+
+**FR-3.1:** The sender shall set a custom TTL (Time-To-Live) with these options only:
+- 1 minute (1m)
+- 15 minutes (15m)
+- 1 hour (1h)
+- 36 hours (36h)
+- 1 day (1d)
+- 4 days (4d)
+
+**FR-3.2:** TTL selection shall use a creative custom time picker UI
+
+**FR-3.3:** After link generation, the sender shall see an animated TTL countdown display showing remaining time before data expires
+
+**FR-3.4:** Data shall be automatically purged from memory upon TTL expiration
+
+### FR-4: Sender - Link Generation & Encryption
+
+**FR-4.1:** Upon confirmation to create the share:
+1. Client-side encryption occurs using ChaCha20-Poly1305
+2. Encryption key is embedded in the URL fragment (client-side only, never sent to server)
+3. A cryptographically random 64-character case-sensitive share ID is generated
+4. Password (if set) is hashed and included in client-side decryption logic
+5. Share link is displayed: `https://domain.com/share/[64-char-ID]#[encryptionKey]`
+
+**FR-4.2:** The share link shall be displayed one time only
+
+**FR-4.3:** After the sender confirms they have copied the link (via explicit action or auto-detect), they shall have NO further access to the information
+
+**FR-4.4:** The application shall display:
+- A confirmation that the share has been created
+- The animated TTL countdown (eye candy visual)
+- A button to create a new container/share
+
+**FR-4.5:** The sender can navigate away or create new shares at any time; TTL countdown continues regardless
+
+### FR-5: Sender - Advanced Webhook Notifications (Optional)
+
+**FR-5.1:** The sender may optionally specify a webhook URL to receive notifications when the receiver accesses the data
+
+**FR-5.2:** Webhook configuration shall be:
+- Manual entry per share (not saved between shares)
+- Optional: Sender may choose to persist webhook URL in browser cookie (advanced feature)
+- A "Test" button to validate the webhook before share creation
+- Custom message template or default: "your submission has been downloaded at [date/time]"
+
+**FR-5.3:** Webhook delivery shall be:
+- Fire-and-forget (no retry logic)
+- Sent upon receiver access
+- Payload: JSON with custom message (no session ID included)
+- Server shall inform sender of fire-and-forget behavior
+
+**FR-5.4:** If webhook delivery fails, no notification is sent and no error is displayed to sender
+
+### FR-6: Receiver - Link Access & Data Retrieval
+
+**FR-6.1:** The receiver accesses the share via the unique link containing the share ID and encryption key in the URL fragment
+
+**FR-6.2:** Before revealing content, the receiver shall see:
+- Total container size (e.g., "2.3 MB")
+- A warning message with nice animation: "This data will be permanently deleted after you access it. Are you sure?"
+- Option to back off without seeing content
+
+**FR-6.3:** After confirming access, the receiver shall see:
+- File names, sizes, types, and thumbnails (200x300px for images)
+- Text content displayed in a separate section (if text-only share)
+- Download button(s) for files or ZIP archive option
+- Copy-to-clipboard icon for text content
+- Animated progress bar with percentage, file size, and time remaining
+
+**FR-6.4:** For text-only shares:
+- Text is displayed in the UI
+- Receiver can copy text via copy-to-clipboard icon
+- Download button is NOT shown
+
+**FR-6.5:** For file-only shares:
+- Download button(s) for individual files
+- Option to download all files as ZIP archive
+- Text display section is hidden
+
+**FR-6.6:** For mixed shares (text + files):
+- Text and files shown in separate sections
+- All interaction options (copy, download) available
+
+**FR-6.7:** Data deletion trigger:
+- Data is deleted ONLY after ALL files have been downloaded AND/OR text has been copied
+- Animated checkmark/indicator shown for each completed action
+- After deletion, any further access attempts return an error
+
+**FR-6.8:** Password decryption (if sender set one):
+- Password input on the same page as the share link
+- Password shown by default (not masked)
+- Must be entered before accessing data
+
+**FR-6.9:** Browser window closure:
+- If receiver closes the browser window, data is purged from memory after 1 second (grace period)
+- Reopening the link or accessing from different window will not retrieve data
+
+### FR-7: Receiver - Error Responses
+
+**FR-7.1:** Invalid, expired, or already-accessed links shall return semi-random humorous error messages, e.g.:
+- "We can't find what you're looking for"
+- "No droids here"
+- "There is no cake"
+- "This share has evaporated"
+- (Additional creative messages as desired)
+
+**FR-7.2:** Error messages shall be displayed with nice animations
+
+### FR-8: Rate Limiting & CAPTCHA
+
+**FR-8.1:** Rate limiting shall enforce:
+- Maximum 3 shares created per minute per unique IP address
+- Upon rate limit violation, show a "We're busy" message with animated backward clock showing wait time
+
+**FR-8.2:** Advanced CAPTCHA (hCaptcha) shall:
+- Be required on EVERY share creation
+- Validate human interaction before link generation
+- Be privacy-focused (hCaptcha)
+
+### FR-9: Session Management
+
+**FR-9.1:** A unique Session ID shall be generated for each sender/receiver interaction
+
+**FR-9.2:** Session ID shall be hidden from users (not displayed in UI)
+
+**FR-9.3:** Session ID shall NOT be included in webhook payloads
+
+**FR-9.4:** Session ID is used internally for tracking and memory management only
+
+### FR-10: Health Check & Monitoring
+
+**FR-10.1:** A `/health` endpoint shall be publicly available and return HTTP 200
+
+**FR-10.2:** The endpoint shall return JSON telemetry:
+```json
+{
+  "status": "healthy",
+  "containers_created": 1234,
+  "containers_delivered": 1100,
+  "memory_used_mb": 45.3,
+  "memory_free_mb": 512.7,
+  "timestamp": "2026-04-15T14:32:00Z"
+}
+```
+
+**FR-10.3:** Access to `/health` requires a random API key:
+- Generated at server startup
+- Emitted to terminal (console.log)
+- Persists for full server lifecycle
+- No rotation
+- Passed as query parameter or header: `Authorization: Bearer [API_KEY]`
+
+**FR-10.4:** Unauthorized `/health` requests shall return HTTP 401
+
+---
+
+## Non-Functional Requirements
+
+### NFR-1: Performance
+
+**NFR-1.1:** Link generation shall complete within 500ms (client-side encryption)
+
+**NFR-1.2:** File upload progress shall update in real-time (per-file)
+
+**NFR-1.3:** Receiver access/download shall begin within 1 second of confirmation
+
+**NFR-1.4:** Memory cleanup (data deletion) shall occur within 1 second of trigger event
+
+**NFR-1.5:** The application shall support at least 100 concurrent active shares simultaneously (within 2.5 MB memory constraint)
+
+### NFR-2: Scalability & Resource Management
+
+**NFR-2.1:** The application shall operate memory-only with no database persistence
+
+**NFR-2.2:** Maximum total memory footprint per share: 2.5 MB
+
+**NFR-2.3:** Sender shall be prevented from uploading if available memory is insufficient
+
+**NFR-2.4:** No automatic memory management beyond natural GC; system shall handle concurrent shares naturally
+
+**NFR-2.5:** Upon application restart (crash, deployment), all in-flight shares shall be lost immediately
+
+**NFR-2.6:** Sender shall be informed of app restart risk prominently in UI
+
+### NFR-3: Availability
+
+**NFR-3.1:** No data persistence or recovery mechanism
+
+**NFR-3.2:** No redundancy or failover; single instance application
+
+**NFR-3.3:** Zero logging means no audit trail for debugging (except debug mode)
+
+### NFR-4: Reliability
+
+**NFR-4.1:** Encryption/decryption failures shall not expose plaintext
+
+**NFR-4.2:** Memory leaks must not accumulate; strict cleanup on share deletion
+
+**NFR-4.3:** Browser close shall trigger 1-second grace period, then automatic purge
+
+### NFR-5: Maintainability
+
+**NFR-5.1:** Debug mode enabled via environment variable (`DEBUG=true`)
+
+**NFR-5.2:** When debug mode enabled:
+- All errors and debugging info logged to terminal/console only
+- No persistent logs or files
+- No log rotation or archival
+
+**NFR-5.3:** Code shall be modular and well-documented
+
+---
+
+## Security Requirements
+
+### SEC-1: Encryption & Cryptography
+
+**SEC-1.1:** Client-side encryption mandatory:
+- Algorithm: ChaCha20-Poly1305
+- Encryption key generated client-side and embedded in URL fragment
+- Server NEVER has access to plaintext data or encryption keys
+- Key length: 256 bits
+
+**SEC-1.2:** Optional password-based decryption layer:
+- Password: 14-256 characters (sender-chosen or auto-generated)
+- Used to derive additional encryption key via PBKDF2 or Argon2
+- Password must be entered by receiver on same page as share link
+
+**SEC-1.3:** Web Crypto API mandatory for encryption operations:
+- No fallback for unsupported browsers
+- Browsers without Web Crypto API shall see suggestion to upgrade
+
+**SEC-1.4:** Cryptographic random number generation:
+- Share ID (64 characters): cryptographically random
+- All nonces and salts: cryptographically random
+- Use `crypto.getRandomValues()` for client-side RNG
+- Use `crypto.randomBytes()` for server-side RNG
+
+### SEC-2: Transport Security
+
+**SEC-2.1:** HTTPS/TLS enforcement:
+- HTTP/2 protocol (outmost security)
+- TLS 1.3 minimum
+- No HTTP fallback
+- HSTS header: `Strict-Transport-Security: max-age=31536000; includeSubDomains; preload`
+
+**SEC-2.2:** All security headers mandatory:
+- `Content-Security-Policy`: Restrict inline scripts, default-src 'self', no external CDNs for scripts
+- `X-Frame-Options: DENY` (prevent clickjacking)
+- `X-Content-Type-Options: nosniff` (prevent MIME sniffing)
+- `X-XSS-Protection: 1; mode=block` (legacy XSS protection)
+
+### SEC-3: Input Validation & Sanitization
+
+**SEC-3.1:** All text inputs shall be sanitized:
+- No HTML tags or script content allowed
+- Markdown parsing restricted to basic syntax only (bold, italic, links)
+- No executable content or embedded media
+- Use whitelist approach for allowed markdown syntax
+
+**SEC-3.2:** File uploads:
+- Accept any file type (no restrictions)
+- Validate file size per-file and total
+- No executable file detection or restrictions
+- Filename sanitization: remove path traversal characters
+
+**SEC-3.3:** Password input:
+- Accept any printable characters (14-256 range enforced)
+- No special parsing or interpretation
+
+**SEC-3.4:** Webhook URL validation:
+- Must be valid HTTP/HTTPS URL format
+- Test endpoint before accepting
+- Must be HTTPS only
+
+### SEC-4: Access Control & One-Time Access
+
+**SEC-4.1:** Share link one-time access:
+- Share ID tracked: "accessed" flag set to true after first retrieval
+- Second access attempt returns "Already accessed" error
+- Receiver accesses via link: server marks share as accessed, triggers data deletion
+
+**SEC-4.2:** Sender access revocation:
+- After sender confirms link copied, they have ZERO access to share data
+- Server does not track sender identity
+- Sender cannot revoke or recall share (only by not sharing the link via backchannel)
+
+**SEC-4.3:** Receiver access restriction:
+- Only via valid share link with valid share ID
+- Password required if sender set one
+- Browser window closure triggers 1-second grace then purge
+
+### SEC-5: Rate Limiting & Abuse Prevention
+
+**SEC-5.1:** Rate limiting:
+- 3 shares maximum per minute per unique IP address
+- Exceeded limit: show "We're busy" message with countdown timer
+- Rate limit window: rolling 1-minute window
+
+**SEC-5.2:** CAPTCHA protection:
+- hCaptcha (privacy-focused)
+- Required on EVERY share creation
+- Must pass before link generation proceeds
+- No bypass or whitelist
+
+### SEC-6: Privacy & Anonymity
+
+**SEC-6.1:** Zero logging:
+- No access logs
+- No error logs (except debug mode terminal output)
+- No audit trails
+- No IP logging or tracking
+- No session correlation across requests
+- No persistence of any kind
+
+**SEC-6.2:** Anonymous users:
+- No authentication required
+- No user accounts
+- No cookies for tracking (except optional sender webhook/email cookie)
+- No fingerprinting or identification
+
+**SEC-6.3:** Webhook cookie (optional):
+- Sender may choose to store webhook URL in browser cookie
+- Cookie not sent to server by default
+- Used only for sender convenience (prefill webhook field)
+- No server-side session association
+
+**SEC-6.4:** Sender risk disclosure:
+- Prominent warning: "This application does not persist data. If the server restarts, your share will be lost."
+
+### SEC-7: Data Deletion & Memory Cleanup
+
+**SEC-7.1:** Automatic deletion triggers:
+- TTL expiration (1m to 4d)
+- After receiver access/download
+- After receiver browser window closes (1-second grace)
+- Upon application start (no persistence across restarts)
+
+**SEC-7.2:** Deletion process:
+- Immediate purge from memory
+- Cryptographic overwrite (optional: overwrite with random data before deallocation)
+- No recovery possible
+
+**SEC-7.3:** Memory cleanup:
+- No memory leaks; strict garbage collection
+- Failed deletion attempts logged in debug mode only
+
+### SEC-8: Browser & Client Security
+
+**SEC-8.1:** Modern browsers only:
+- Target: Last 12 months of releases
+- Chrome, Firefox, Safari, Edge
+- No IE or legacy browser support
+- Graceful fallback: "Use a modern browser"
+
+**SEC-8.2:** No client-side persistence:
+- No localStorage (explicitly forbidden)
+- No sessionStorage (explicitly forbidden)
+- No IndexedDB
+- Data in memory during session only
+
+**SEC-8.3:** Browser security features:
+- CSP to prevent inline script execution
+- No eval() or dynamic code execution
+- Subresource integrity (SRI) for any external resources
+- Service Worker for PWA (if offline caching needed)
+
+---
+
+## User Interface & Experience
+
+### UI-1: Design Philosophy
+
+**UI-1.1:** Modern, fresh UI design with eye candy animations throughout
+
+**UI-1.2:** Mobile-first responsive design (PWA-capable)
+
+**UI-1.3:** Dark mode / Light mode toggle available
+
+**UI-1.4:** All interactive elements shall include smooth animations
+
+**UI-1.5:** Visual feedback for all user actions (progress bars, checkmarks, spinners, etc.)
+
+**UI-1.6:** User and dog theme/mascot (friendly, approachable tone)
+
+### UI-2: Sender Interface
+
+**UI-2.1:** Landing page with two tabs:
+- Text Mode
+- File Mode
+
+**UI-2.2:** Text Mode:
+- Large textarea for text input
+- Character counter (e.g., "1,250 / 2.5 MB")
+- Markdown syntax guide/tooltip
+- Password field (auto-filled with generated password, can override)
+- TTL custom picker (creative UI)
+- CAPTCHA widget
+- "Create Share" button
+
+**UI-2.3:** File Mode:
+- Drag-and-drop zone with visual feedback
+- File picker button ("Browse Files")
+- File list with preview thumbnails (200x300px for images)
+- File name, size, type display per file
+- Rename icon for each file
+- Delete (X) icon for each file
+- Drag handle for reordering
+- Password field (auto-filled)
+- TTL custom picker
+- CAPTCHA widget
+- "Create Share" button
+
+**UI-2.4:** Password field:
+- Display: shown by default (not masked)
+- Copy button for independent password copy
+- "Generate new password" button to regenerate
+- Toggle to disable password protection
+
+**UI-2.5:** TTL Picker (creative):
+- Custom visual component (not standard dropdown)
+- Options: 1m, 15m, 1h, 36h, 1d, 4d
+- Visual representation of time (e.g., clock, slider, dial)
+
+**UI-2.6:** After share creation:
+- Display share link (one-time, clickable to select)
+- Copy button with visual confirmation
+- After confirmation, show animated TTL countdown
+- Display: "Your data has been secured. Remaining time: [animated countdown]"
+- Button: "Create Another Share"
+- Can navigate away; TTL continues in background (optional: minimize to corner?)
+
+**UI-2.7:** Rate limit error:
+- "We're busy right now. Please wait..."
+- Animated backward clock showing wait time
+
+**UI-2.8:** Advanced webhook section (optional, expandable):
+- Webhook URL input field
+- Test button (validates before share creation)
+- Custom message template input or use default
+- Clear visual indication of fire-and-forget behavior
+
+### UI-3: Receiver Interface
+
+**UI-3.1:** Share link landing page:
+- Display total container size (e.g., "2.3 MB")
+- Large warning message with animation: "⚠️ This data will be permanently deleted after you access it. Are you sure?"
+- Two buttons: "Access Data" (primary) and "Go Back" (secondary)
+- Friendly mascot (user and dog)
+
+**UI-3.2:** After confirming access:
+- If password required: show password input field with submit button
+- After password validated: display content
+
+**UI-3.3:** Content display (after access confirmed & password validated):
+- **Text section** (if text present):
+  - Displayed in read-only textarea or styled box
+  - Copy-to-clipboard icon with tooltip
+  - Animated checkmark after copy success
+
+- **File section** (if files present):
+  - File list with thumbnails, names, sizes, types
+  - Individual download buttons per file
+  - "Download All as ZIP" button
+  - Animated progress bar (percentage + file size + time remaining)
+  - Animated checkmark for each downloaded file
+
+**UI-3.4:** Download progress bar (eye candy):
+- Percentage (0-100%)
+- File size transferred (e.g., "1.2 MB / 2.3 MB")
+- Time remaining estimate
+- Smooth animation
+- Color change or glow on completion
+
+**UI-3.5:** After all downloads/copies complete:
+- Message: "All data retrieved. Thank you!"
+- Data automatically deleted from memory
+- Session cleaned up
+
+**UI-3.6:** Error states:
+- Semi-random humorous messages with animations
+- "We can't find what you're looking for"
+- "No droids here"
+- "There is no cake"
+- Friendly mascot included
+
+### UI-4: Accessibility (WCAG 2.1 AA)
+
+**UI-4.1:** All interactive elements must be keyboard-accessible
+
+**UI-4.2:** Proper ARIA labels for all form inputs and buttons
+
+**UI-4.3:** Color contrast ratio minimum 4.5:1 for normal text, 3:1 for large text
+
+**UI-4.4:** Focus indicators visible on all interactive elements
+
+**UI-4.5:** Alt text for all images and icons
+
+**UI-4.6:** Semantic HTML structure (headings, lists, etc.)
+
+**UI-4.7:** Form validation messages clear and associated with inputs
+
+**UI-4.8:** No keyboard traps; tab order logical
+
+**UI-4.9:** Error messages not color-only; include text/icons
+
+### UI-5: Mobile Responsiveness & PWA
+
+**UI-5.1:** Responsive design:
+- Mobile-first approach
+- Touch-friendly buttons and inputs (min 44x44px)
+- Optimized layouts for small screens
+- Full functionality on all screen sizes
+
+**UI-5.2:** PWA capabilities (if mobile):
+- Service Worker for offline caching (optional)
+- Web manifest for installability
+- Add-to-home-screen support
+- Full-screen mode option
+
+**UI-5.3:** Mobile-specific:
+- Touch-friendly file picker
+- Optimized drag-and-drop for touch
+- Mobile keyboard handling
+
+---
+
+## Technical Architecture
+
+### TECH-1: Technology Stack
+
+**TECH-1.1:** Backend:
+- Runtime: Node.js (latest stable)
+- Framework: Fastify (for security and performance)
+- HTTP Protocol: HTTP/2
+- TLS: TLS 1.3 minimum
+- Encryption: Web Crypto API (client-side), native `crypto` module (server-side)
+
+**TECH-1.2:** Frontend:
+- Client-side encryption: Web Crypto API (ChaCha20-Poly1305)
+- UI Framework: React or vanilla JavaScript (component-based)
+- Styling: CSS-in-JS or Tailwind CSS
+- PWA: Service Worker, Web Manifest
+- No external encryption libraries (use native Web Crypto)
+
+**TECH-1.3:** Third-party integrations:
+- CAPTCHA: hCaptcha (privacy-focused)
+- No database (memory-only)
+- No authentication library
+
+### TECH-2: Project Structure
+
+```
+secure-ephemeral-exchange/
+├── src/
+│   ├── server/
+│   │   ├── index.js (Fastify app setup)
+│   │   ├── routes/
+│   │   │   ├── share.js (POST /share, GET /share/:id)
+│   │   │   ├── health.js (GET /health)
+│   │   │   └── static.js (serve frontend)
+│   │   ├── middleware/
+│   │   │   ├── security-headers.js
+│   │   │   ├── rate-limit.js
+│   │   │   ├── request-validation.js
+│   │   │   └── error-handler.js
+│   │   ├── services/
+│   │   │   ├── share-manager.js (in-memory store)
+│   │   │   ├── cleanup.js (TTL & deletion)
+│   │   │   ├── webhook.js (fire-and-forget)
+│   │   │   └── logger.js (debug mode only)
+│   │   ├── utils/
+│   │   │   ├── crypto.js (random ID generation)
+│   │   │   ├── validation.js (input sanitization)
+│   │   │   └── config.js (env variables)
+│   │   └── constants/
+│   │       └── config.js
+│   └── client/
+│       ├── index.html
+│       ├── css/
+│       │   ├── main.css
+│       │   └── animations.css
+│       ├── js/
+│       │   ├── app.js
+│       │   ├── sender.js
+│       │   ├── receiver.js
+│       │   ├── crypto.js (client-side ChaCha20-Poly1305)
+│       │   ├── ui.js (animations, modals)
+│       │   └── utils.js
+│       └── assets/
+│           ├── icons/
+│           └── images/
+├── .env.example
+├── package.json
+├── server.js (entry point)
+└── README.md
+```
+
+### TECH-3: Environment Variables
+
+```env
+NODE_ENV=production
+PORT=443
+HOST=0.0.0.0
+
+# HTTPS/TLS
+TLS_KEY_PATH=/etc/ssl/private/key.pem
+TLS_CERT_PATH=/etc/ssl/certs/cert.pem
+
+# Domain Configuration
+APP_DOMAIN=https://secure-share.example.com
+
+# hCaptcha
+HCAPTCHA_SECRET_KEY=your_secret_key
+HCAPTCHA_SITE_KEY=your_site_key
+
+# Rate Limiting
+RATE_LIMIT_WINDOW_MS=60000
+RATE_LIMIT_MAX_SHARES=3
+
+# Memory Management
+MAX_TOTAL_MEMORY_MB=1024
+MAX_SHARE_SIZE_BYTES=2621440
+
+# Cleanup
+TTL_CHECK_INTERVAL_MS=10000
+
+# Debug Mode
+DEBUG=false
+
+# Custom Domain (optional)
+CUSTOM_DOMAIN=https://custom.domain.com
+```
+
+### TECH-4: Database & State Management
+
+**TECH-4.1:** In-memory share store:
+```javascript
+// Pseudo-code
+const shares = {
+  [shareId]: {
+    id: "64-char-random",
+    encryptedData: Buffer, // encrypted payload from client
+    password: "hashed-password", // if set
+    accessed: false,
+    createdAt: timestamp,
+    expiresAt: timestamp,
+    sessionId: "session-id",
+    webhookUrl: null,
+    webhookMessage: null,
+    fileMetadata: [ { name, size, type, hash } ]
+  }
+};
+```
+
+**TECH-4.2:** No persistence:
+- All shares stored in RAM
+- Lost on application restart
+- No backup or recovery
+
+### TECH-5: Server Endpoints
+
+**TECH-5.1:** POST `/share`
+- Request: multipart form-data or JSON
+  - `encryptedData`: encrypted payload (from client)
+  - `ttl`: TTL seconds (60 to 345600)
+  - `password`: optional hashed password
+  - `webhookUrl`: optional webhook URL
+  - `webhookMessage`: optional custom message
+  - `fileMetadata`: array of file info
+- Response: 
+  ```json
+  {
+    "shareId": "64-char-id",
+    "link": "https://domain.com/share/64-char-id"
+  }
+  ```
+- Errors: 400 (validation), 429 (rate limit), 507 (insufficient memory)
+
+**TECH-5.2:** GET `/share/:shareId`
+- Query params: none
+- Response: 
+  ```json
+  {
+    "encryptedData": "base64-encoded",
+    "fileMetadata": [ ... ],
+    "passwordRequired": boolean
+  }
+  ```
+- Marks share as accessed
+- Triggers data deletion after download
+- Errors: 404 (not found), 410 (already accessed/expired)
+
+**TECH-5.3:** GET `/health`
+- Requires API key: `Authorization: Bearer [API_KEY]`
+- Response:
+  ```json
+  {
+    "status": "healthy",
+    "containers_created": 1234,
+    "containers_delivered": 1100,
+    "memory_used_mb": 45.3,
+    "memory_free_mb": 512.7,
+    "timestamp": "2026-04-15T14:32:00Z"
+  }
+  ```
+- Errors: 401 (unauthorized)
+
+**TECH-5.4:** GET `/` (and other static)
+- Serves `index.html` and static assets
+- Serves frontend SPA
+
+### TECH-6: Client-Side Encryption Flow
+
+**TECH-6.1:** Encryption (Sender):
+1. Sender inputs text/files
+2. Client generates random encryption key (256-bit)
+3. If password set: derive additional key from password (PBKDF2 with 100k iterations)
+4. Combine keys or use password-derived key
+5. Encrypt data using ChaCha20-Poly1305
+6. Generate random share ID (64 characters)
+7. POST encrypted data to `/share` endpoint
+8. Server responds with share ID
+9. Client constructs link: `https://domain.com/share/[shareId]#[base64-encryptionKey]`
+10. Display link to sender
+
+**TECH-6.2:** Decryption (Receiver):
+1. Receiver accesses link with share ID + encryption key in fragment
+2. Click "Access Data"
+3. If password required: enter password, derive key from password
+4. Client fetches encrypted data from `/share/:shareId`
+5. Extract encryption key from URL fragment
+6. Decrypt using ChaCha20-Poly1305
+7. Display plaintext content
+8. Trigger data deletion on server after download
+
+### TECH-7: Security Headers Configuration
+
+```javascript
+// Fastify middleware
+const securityHeaders = {
+  'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+  'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'",
+  'X-Frame-Options': 'DENY',
+  'X-Content-Type-Options': 'nosniff',
+  'X-XSS-Protection': '1; mode=block',
+  'Referrer-Policy': 'no-referrer'
+};
+```
+
+---
+
+## Data Flow
+
+### DF-1: Sender Upload & Link Generation
+
+```
+1. User visits https://domain.com/
+2. Browser downloads index.html + JS + CSS
+3. User selects Text Mode or File Mode
+4. User inputs content:
+   - Text: pastes/types markdown text
+   - Files: drags-and-drops or picks files (up to 10, 2.5MB total)
+5. User sees preview (thumbnails for images, icons for files)
+6. User can rename, reorder, delete files
+7. User can modify/override auto-generated password (14-256 chars)
+8. User selects TTL (1m, 15m, 1h, 36h, 1d, 4d)
+9. User solves hCaptcha
+10. Client generates random 256-bit encryption key
+11. Client encrypts all data (text + files) using ChaCha20-Poly1305
+12. Client POSTs encrypted payload + metadata to /share endpoint
+13. Server validates:
+    - Rate limit check (3/min per IP)
+    - Memory availability
+    - Payload size (≤2.5MB)
+14. Server stores encrypted data in RAM: shares[shareId] = {...}
+15. Server responds with shareId
+16. Client constructs link: https://domain.com/share/[shareId]#[key]
+17. User confirms link copied
+18. Client clears sender's local memory (sensitive data)
+19. Server display: animated TTL countdown + "Create Another Share" button
+20. User can close browser, navigate away; TTL runs in background
+21. TTL expires or receiver accesses → data purged from memory
+```
+
+### DF-2: Receiver Access & Download
+
+```
+1. User receives link via backchannel: https://domain.com/share/[shareId]#[key]
+2. User clicks link
+3. Browser navigates to /share/[shareId]
+4. Frontend detects share ID and encryption key in URL fragment
+5. Frontend displays warning: "This data will be permanently deleted after access. Continue?"
+6. User clicks "Access Data"
+7. Frontend sends GET request to /share/[shareId] (no key in request body)
+8. Server validates:
+    - Share ID exists
+    - Share not already accessed
+    - Share not expired (TTL)
+    - Rate limit (IP)
+9. Server responds with encrypted data + fileMetadata
+10. Server marks share as "accessed = true"
+11. Frontend extracts encryption key from URL fragment (stayed client-side)
+12. Frontend decrypts data using ChaCha20-Poly1305
+13. If password required: user enters password
+    - Derive key from password (PBKDF2)
+    - Attempt decryption (if fails → error message)
+14. Frontend displays:
+    - Text content (if text share): copy button visible
+    - Files: download buttons (individual or ZIP)
+15. User clicks download or copy
+16. Frontend shows animated progress bar
+17. After ALL files downloaded AND/OR text copied:
+    - Frontend sends DELETE request to /share/[shareId]
+    - Server deletes share from memory immediately
+    - Frontend shows confirmation: "Data deleted"
+18. If user closes browser:
+    - 1-second grace period
+    - Server clears share from memory
+    - Link becomes inaccessible
+```
+
+### DF-3: TTL Expiration & Cleanup
+
+```
+1. Server maintains cleanup interval (every 10 seconds)
+2. Check all shares in memory:
+    - If (currentTime > expiresAt): delete share
+3. Delete operation:
+    - Remove entry from shares map
+    - Force garbage collection (if needed)
+    - Trigger webhook notification (if configured) → fire-and-forget
+4. Data purged from memory
+```
+
+### DF-4: Webhook Notification (Fire-and-Forget)
+
+```
+1. Receiver completes download
+2. Server triggers webhook notification:
+    - URL: sender-provided webhookUrl
+    - Method: POST
+    - Payload: JSON { message: "custom or default message", timestamp }
+    - No authentication
+3. Server sends request but doesn't wait for response
+4. If webhook fails: silently ignored, no retry
+5. No error feedback to sender
+```
+
+---
+
+## Error Handling & Edge Cases
+
+### EH-1: Sender Errors
+
+| Scenario | Error Message | Status Code |
+|----------|---------------|------------|
+| Payload exceeds 2.5 MB | "File size exceeds 2.5 MB limit" | 413 |
+| More than 10 files | "Maximum 10 files per share" | 400 |
+| Memory insufficient | "Platform is busy. Please try again later" | 507 |
+| Rate limit exceeded | "We're busy right now. Wait [countdown]" | 429 |
+| CAPTCHA failed | "CAPTCHA validation failed. Please try again" | 400 |
+| Invalid TTL | "Invalid TTL value" | 400 |
+| Invalid webhook URL | "Invalid webhook URL format" | 400 |
+| Webhook test failed | "Webhook test failed. Check URL" | 400 |
+
+### EH-2: Receiver Errors
+
+| Scenario | Error Message | Status Code |
+|----------|---------------|------------|
+| Invalid/expired share | "We can't find what you're looking for" (humorous variants) | 404 |
+| Already accessed | "There is no cake" (humorous variant) | 410 |
+| TTL expired | "No droids here" (humorous variant) | 410 |
+| Browser window closed | Auto-purge after 1 second grace (user sees nothing) | N/A |
+| Wrong password | "Decryption failed. Check password" | 400 |
+| Download interrupted | "Download failed. Please try again" | N/A (browser handles) |
+
+### EH-3: Server Errors (Debug Mode Only)
+
+- Memory allocation failure
+- Encryption/decryption exceptions
+- Webhook HTTP errors
+- Unexpected state inconsistencies
+- Logged to terminal only (if DEBUG=true)
+
+### EH-4: Edge Cases
+
+**EH-4.1:** Sender behavior:
+- Sender closes browser immediately after creating share → Link remains valid in memory
+- Sender's share ID leaked → Anyone with link + password can access (by design)
+- Sender tries to access their own share via link → Treated as receiver (one-time access)
+- Multiple tabs open → Each tab is independent session; no session correlation
+
+**EH-4.2:** Receiver behavior:
+- Receiver accesses partial file → Download interrupted, no cleanup triggered
+  - Mitigation: Re-access link attempts to re-decrypt but fails (already accessed)
+- Receiver opens link in two tabs → First access marks share as "accessed"
+  - Second tab refresh/reload → 410 (already accessed) error
+- Receiver loses internet mid-download → 1-second grace period applies if they close browser
+- Receiver copies password → Password visible in plaintext (by design)
+
+**EH-4.3:** Application behavior:
+- Server restarts mid-transfer → All in-flight shares lost, connections dropped
+- Server out of memory → New shares rejected with 507 error
+- TTL boundary condition (expires at exact moment of access) → Access attempt succeeds, then deletion occurs
+- Concurrent access to same share → First access wins, marks accessed, second access sees 410
+
+---
+
+## Constraints & Assumptions
+
+### CNS-1: Technical Constraints
+
+1. **Memory-only operation**: No database, no file system persistence. All data in RAM.
+2. **No load balancing**: Single-instance application; no clustering or multi-process setup.
+3. **No session persistence**: If process restarts, all shares vanish.
+4. **2.5 MB total per share**: Hard limit enforced at upload and storage.
+5. **10 files max per share**: Hard limit enforced at upload.
+6. **64-character random IDs**: Case-sensitive, cryptographically random.
+7. **ChaCha20-Poly1305 only**: No algorithm negotiation or fallback.
+8. **HTTPS/TLS 1.3 only**: No HTTP or older TLS versions.
+9. **HTTP/2 only**: No HTTP/1.1 fallback.
+
+### CNS-2: Functional Constraints
+
+1. **One-time access enforcement**: Share can be accessed ONLY once (sender confirmation + receiver access).
+2. **No revocation**: Sender cannot recall a share; only mitigation is not sharing the link.
+3. **No recovery**: Deleted shares cannot be recovered.
+4. **Zero logging**: No audit trail; debugging only possible via debug mode.
+5. **Anonymous users**: No accounts, no authentication, no identity verification.
+6. **TTL fixed options**: No custom duration input; only predefined options (1m, 15m, 1h, 36h, 1d, 4d).
+7. **Rate limit per IP**: 3 shares per minute; includes all users behind same IP.
+
+### CNS-3: Security Constraints
+
+1. **Client-side encryption mandatory**: Server cannot inspect plaintext.
+2. **No authentication**: No way to verify sender or receiver identity.
+3. **Backchannel assumption**: Assumes secure out-of-band communication between sender and receiver.
+4. **No key escrow**: Lost encryption key means data is unrecoverable.
+5. **No forward secrecy beyond TTL**: If link is leaked, anyone with the link can access (until accessed or expired).
+
+### CNS-4: Assumptions
+
+1. **Sender trusts backchannel**: Assumes sender securely communicates link to intended receiver.
+2. **Receiver uses secure browser**: Assumes receiver's browser environment is not compromised.
+3. **Network security**: Assumes HTTPS/TLS protects data in transit.
+4. **Cryptographic assumptions**: Assumes ChaCha20-Poly1305 is cryptographically sound.
+5. **Modern browser support**: Assumes receiver uses modern browser with Web Crypto API.
+6. **Unique IPs for rate limiting**: Assumes IP address is reasonable proxy for user (not perfect).
+7. **Server integrity**: Assumes server code is not malicious (sender's responsibility to run their own instance).
+
+### CNS-5: Regulatory & Compliance
+
+1. **GDPR**: Application design complies (zero data retention, no user tracking).
+2. **HIPAA**: Not explicitly compliant; sender must assess for their use case.
+3. **SOC 2**: Not applicable (single instance, no audit logs).
+4. **PCI DSS**: Not applicable (no payment processing).
+
+---
+
+## Acceptance Criteria
+
+### AC-1: Sender Functionality
+
+- [ ] Sender can upload up to 10 files (max 2.5 MB total) via drag-drop and file picker
+- [ ] Sender can paste/type text with markdown support
+- [ ] Sender can see previews of files before link generation
+- [ ] Sender can rename, reorder, and delete files before link generation
+- [ ] Sender can set TTL (1m, 15m, 1h, 36h, 1d, 4d)
+- [ ] Sender can view auto-generated password (14-256 chars) and override it
+- [ ] Sender can toggle password protection on/off
+- [ ] Sender can optionally specify webhook URL with test button
+- [ ] Sender can see share link displayed exactly once
+- [ ] After confirming link copied, sender has zero access to share data
+- [ ] Sender sees animated TTL countdown after link generation
+- [ ] Sender can create new shares from confirmation screen
+- [ ] Character counter and data size indicator visible for text input
+- [ ] All inputs sanitized (no HTML/script injection)
+- [ ] Rate limiting prevents >3 shares per minute per IP
+- [ ] hCaptcha required on every share creation
+
+### AC-2: Receiver Functionality
+
+- [ ] Receiver can access share via unique link
+- [ ] Receiver sees total container size before confirming access
+- [ ] Receiver sees warning message before access with option to back out
+- [ ] Receiver can enter password (if required) on same page as link
+- [ ] Password shown by default (not masked)
+- [ ] Receiver can view file names, sizes, types, thumbnails after access
+- [ ] Receiver can download individual files
+- [ ] Receiver can download all files as ZIP archive
+- [ ] Receiver can copy text to clipboard (for text-only shares)
+- [ ] Animated progress bar shows percentage, file size, time remaining
+- [ ] Animated checkmarks shown for each downloaded file
+- [ ] Data automatically deleted after all files downloaded AND/OR text copied
+- [ ] Humorous error messages for invalid/expired/accessed shares
+- [ ] Browser window closure triggers automatic data deletion (1-second grace)
+- [ ] One-time access enforced; second access returns error
+
+### AC-3: Security & Encryption
+
+- [ ] Client-side encryption using ChaCha20-Poly1305 implemented
+- [ ] Encryption key embedded in URL fragment (client-side only)
+- [ ] Server never has access to plaintext data
+- [ ] Optional password-based decryption layer works correctly
+- [ ] HTTPS/TLS 1.3 enforced; HTTP requests redirected
+- [ ] HTTP/2 protocol used
+- [ ] All security headers present (HSTS, CSP, X-Frame-Options, X-Content-Type-Options)
+- [ ] hCaptcha integration working
+- [ ] Rate limiting enforced (3/min per IP)
+- [ ] Web Crypto API used for client-side encryption
+- [ ] No browser fallbacks for unsupported browsers (graceful error message)
+
+### AC-4: Data Management
+
+- [ ] Memory-only operation; no database used
+- [ ] Data deleted upon TTL expiration
+- [ ] Data deleted after receiver access
+- [ ] Data deleted after browser window closure (1-second grace)
+- [ ] Application restart loses all in-flight shares
+- [ ] Sender warned about application restart risk
+- [ ] Sender prevented from uploading if memory insufficient
+- [ ] Webhook notifications sent (fire-and-forget) upon receiver access
+- [ ] Webhook test button validates before share creation
+- [ ] Custom webhook messages supported with default fallback
+
+### AC-5: Health & Monitoring
+
+- [ ] `/health` endpoint returns 200 with JSON telemetry
+- [ ] API key generated at startup and emitted to terminal
+- [ ] `/health` requires API key authentication
+- [ ] Telemetry includes containers created, delivered, memory usage
+
+### AC-6: Debugging & Logging
+
+- [ ] Debug mode enabled via environment variable
+- [ ] Debug mode logs errors/info to terminal only (no file persistence)
+- [ ] Zero production logging (when DEBUG=false)
+- [ ] No audit trails or persistent logs
+
+### AC-7: UI/UX
+
+- [ ] Modern, fresh UI with eye candy animations
+- [ ] Mobile-responsive design (PWA-capable)
+- [ ] Dark/Light mode toggle
+- [ ] Separate Text/File tabs
+- [ ] Creative TTL time picker
+- [ ] Creative TTL countdown animation (sender confirmation screen)
+- [ ] User and dog mascot theme
+- [ ] Animated progress bars, checkmarks, error messages
+- [ ] All interactive elements have smooth animations
+- [ ] Friendly error messages with animations
+
+### AC-8: Accessibility
+
+- [ ] WCAG 2.1 AA compliance verified
+- [ ] Keyboard accessibility for all interactive elements
+- [ ] ARIA labels for form inputs
+- [ ] Color contrast ratio ≥4.5:1
+- [ ] Focus indicators visible
+- [ ] Alt text for all images
+- [ ] Semantic HTML structure
+- [ ] No keyboard traps
+
+### AC-9: Privacy & Anonymity
+
+- [ ] Zero logging of access patterns
+- [ ] Zero IP tracking or correlation
+- [ ] No cookies for tracking (except optional webhook URL cookie)
+- [ ] No user accounts or authentication
+- [ ] Session IDs generated but hidden from users
+- [ ] Anonymous sender and receiver workflows
+- [ ] Webhook cookie optional (sender chooses)
+
+### AC-10: Browser & Deployment
+
+- [ ] Tested on modern browsers (last 12 months of releases)
+- [ ] Chrome, Firefox, Safari, Edge supported
+- [ ] No IE or legacy browser support
+- [ ] PWA manifest and service worker implemented
+- [ ] Custom domain configurable via environment variables
+- [ ] TLS certificate/key paths configurable
+
+---
+
+## Glossary
+
+| Term | Definition |
+|------|-----------|
+| **Share** | A container of data (text/files) created by sender, encrypted client-side, and accessed once by receiver |
+| **Share ID** | 64-character cryptographically random unique identifier for a share |
+| **TTL (Time-To-Live)** | Duration for which share data remains in memory before automatic deletion |
+| **Encryption Key** | 256-bit random key used for ChaCha20-Poly1305 encryption, embedded in URL fragment |
+| **Client-Side Encryption** | Encryption performed in sender's browser before uploading to server |
+| **End-to-End Encryption** | Sender encrypts, server stores encrypted data, receiver decrypts (server never sees plaintext) |
+| **One-Time Access** | Share can be accessed/downloaded exactly once; second access returns error |
+| **Backchannel** | Out-of-band, secure communication method used by sender to deliver share link to receiver |
+| **Grace Period** | 1-second delay after browser window closure before data deletion |
+| **Fire-and-Forget** | Webhook notification sent without waiting for response; no retry on failure |
+| **Rate Limiting** | Restriction to 3 shares per minute per unique IP address |
+| **hCaptcha** | Privacy-focused CAPTCHA service required for every share creation |
+| **PWA** | Progressive Web App; offline-capable web application installable on mobile |
+| **Session ID** | Unique identifier for each share interaction; hidden from user |
+| **Sanitization** | Removal or escaping of potentially malicious input (HTML, scripts) |
+| **Web Crypto API** | Browser's native cryptographic API for client-side encryption/decryption |
+| **Memory-Only** | Application state stored entirely in RAM; no database or file system persistence |
+
+---
+
+## Document Sign-Off
+
+| Role | Name | Signature | Date |
+|------|------|-----------|------|
+| Product Owner | [To be determined] | ________________ | ________________ |
+| Technical Lead | [To be determined] | ________________ | ________________ |
+| Security Officer | [To be determined] | ________________ | ________________ |
+| QA Lead | [To be determined] | ________________ | ________________ |
+
+---
+
+**End of SRS Document**

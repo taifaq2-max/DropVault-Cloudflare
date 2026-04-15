@@ -3,13 +3,15 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Secure Ephemeral Data Exchange Platform API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: shares
+    description: Share operations
 paths:
   /healthz:
     get:
@@ -24,7 +26,198 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /health:
+    get:
+      operationId: healthDetailed
+      tags: [health]
+      summary: Detailed health check (requires API key)
+      description: Returns detailed telemetry — requires Authorization Bearer header
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Detailed health
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DetailedHealthStatus"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /shares:
+    post:
+      operationId: createShare
+      tags: [shares]
+      summary: Create a new share
+      description: Upload encrypted data and create a one-time share link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateShareRequest"
+      responses:
+        "201":
+          description: Share created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateShareResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: Payload too large
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limit exceeded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RateLimitErrorResponse"
+        "507":
+          description: Insufficient memory
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /shares/{shareId}:
+    get:
+      operationId: getShare
+      tags: [shares]
+      summary: Retrieve a share (one-time access)
+      description: Fetch encrypted data for a share. Marks it as accessed immediately.
+      parameters:
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 64
+            maxLength: 64
+      responses:
+        "200":
+          description: Share data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetShareResponse"
+        "404":
+          description: Share not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareErrorResponse"
+        "410":
+          description: Share already accessed or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareErrorResponse"
+    delete:
+      operationId: deleteShare
+      tags: [shares]
+      summary: Delete a share after download complete
+      description: Called by receiver after all files downloaded / text copied
+      parameters:
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 64
+            maxLength: 64
+      responses:
+        "200":
+          description: Share deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeleteShareResponse"
+        "404":
+          description: Share not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /shares/{shareId}/peek:
+    get:
+      operationId: peekShare
+      tags: [shares]
+      summary: Peek at share metadata without consuming it
+      description: Returns size and whether password is required — does NOT mark as accessed
+      parameters:
+        - name: shareId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 64
+            maxLength: 64
+      responses:
+        "200":
+          description: Share metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PeekShareResponse"
+        "404":
+          description: Share not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareErrorResponse"
+        "410":
+          description: Share already accessed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShareErrorResponse"
+
+  /webhook/test:
+    post:
+      operationId: testWebhook
+      tags: [shares]
+      summary: Test a webhook URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TestWebhookRequest"
+      responses:
+        "200":
+          description: Webhook test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TestWebhookResponse"
+        "400":
+          description: Invalid webhook URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
   schemas:
     HealthStatus:
       type: object
@@ -34,3 +227,227 @@ components:
       required:
         - status
 
+    DetailedHealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+        containers_created:
+          type: integer
+        containers_delivered:
+          type: integer
+        memory_used_mb:
+          type: number
+        memory_free_mb:
+          type: number
+        timestamp:
+          type: string
+      required:
+        - status
+        - containers_created
+        - containers_delivered
+        - memory_used_mb
+        - memory_free_mb
+        - timestamp
+
+    FileMetadata:
+      type: object
+      properties:
+        name:
+          type: string
+        size:
+          type: integer
+        type:
+          type: string
+        originalIndex:
+          type: integer
+      required:
+        - name
+        - size
+        - type
+        - originalIndex
+
+    CreateShareRequest:
+      type: object
+      properties:
+        encryptedData:
+          type: string
+          description: Base64-encoded encrypted payload (ChaCha20-Poly1305)
+        ttl:
+          type: integer
+          description: Time-to-live in seconds (60 to 345600)
+          minimum: 60
+          maximum: 345600
+        passwordHash:
+          type: string
+          nullable: true
+          description: Optional PBKDF2-derived hash of the password (for verification)
+        passwordSalt:
+          type: string
+          nullable: true
+          description: Base64-encoded salt used for password hashing
+        webhookUrl:
+          type: string
+          nullable: true
+          description: Optional HTTPS webhook URL
+        webhookMessage:
+          type: string
+          nullable: true
+          description: Optional custom webhook message
+        fileMetadata:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileMetadata"
+          nullable: true
+        shareType:
+          type: string
+          enum: [text, files, mixed]
+        totalSize:
+          type: integer
+          description: Total size of the payload in bytes
+        captchaToken:
+          type: string
+          nullable: true
+          description: hCaptcha token (optional in dev mode)
+      required:
+        - encryptedData
+        - ttl
+        - shareType
+        - totalSize
+
+    CreateShareResponse:
+      type: object
+      properties:
+        shareId:
+          type: string
+        expiresAt:
+          type: string
+          description: ISO timestamp when share expires
+      required:
+        - shareId
+        - expiresAt
+
+    GetShareResponse:
+      type: object
+      properties:
+        encryptedData:
+          type: string
+        fileMetadata:
+          type: array
+          items:
+            $ref: "#/components/schemas/FileMetadata"
+          nullable: true
+        passwordRequired:
+          type: boolean
+        passwordSalt:
+          type: string
+          nullable: true
+        shareType:
+          type: string
+          enum: [text, files, mixed]
+        totalSize:
+          type: integer
+        webhookUrl:
+          type: string
+          nullable: true
+        webhookMessage:
+          type: string
+          nullable: true
+      required:
+        - encryptedData
+        - passwordRequired
+        - shareType
+        - totalSize
+
+    PeekShareResponse:
+      type: object
+      properties:
+        totalSize:
+          type: integer
+        passwordRequired:
+          type: boolean
+        shareType:
+          type: string
+          enum: [text, files, mixed]
+        fileCount:
+          type: integer
+        expiresAt:
+          type: string
+      required:
+        - totalSize
+        - passwordRequired
+        - shareType
+        - fileCount
+        - expiresAt
+
+    DeleteShareResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+      required:
+        - success
+        - message
+
+    TestWebhookRequest:
+      type: object
+      properties:
+        webhookUrl:
+          type: string
+      required:
+        - webhookUrl
+
+    TestWebhookResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        statusCode:
+          type: integer
+          nullable: true
+        message:
+          type: string
+      required:
+        - success
+        - message
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+        - message
+
+    RateLimitErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        retryAfterSeconds:
+          type: integer
+      required:
+        - error
+        - message
+        - retryAfterSeconds
+
+    ShareErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        humorousMessage:
+          type: string
+      required:
+        - error
+        - message
+        - humorousMessage
