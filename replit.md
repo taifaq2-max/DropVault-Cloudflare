@@ -49,10 +49,21 @@ A zero-knowledge, one-time file and text sharing platform. Encrypted client-side
 ### Share Encryption Flow
 1. Sender generates 32-byte random key + 12-byte IV
 2. AES-GCM encryption of payload (text+files as JSON)
-3. Encrypted data POSTed to server
-4. Key embedded in URL fragment: `/share/[id]#key=[base64url]`
-5. Receiver extracts key from fragment, fetches encrypted data, decrypts
-6. If password: PBKDF2-derived key encrypts the main key (salt stored on server)
+3. **No password**: raw key in URL fragment (`#key=[base64url]`)
+4. **With password**: PBKDF2 derives a key from password, encrypts the raw key → encrypted key goes in URL fragment (`#key=[base64-encryptedKey]`); salt stored on server
+5. Encrypted data POSTed to server (key NEVER sent to server)
+6. Receiver extracts fragment, fetches data, decrypts: without password → use key directly; with password → use password + salt to recover key, then decrypt
+
+### Pages
+- `/` — SenderPage: text/file tabs, TTL picker, password toggle (PBKDF2), webhook section, rate-limit countdown
+- `/share/:shareId` — ReceiverPage: peek → warning → access → decrypt → copy/download → auto-delete → done
+- `*` — NotFound: friendly dog mascot with humorous messages
+
+### Key Bug Fixes Applied
+- Memory check now uses `os.freemem()` (not heap-only) so it works in dev environments
+- Vite proxy `/api/*` → `http://localhost:8080` for dev API access
+- Password flow: encrypted key (not raw key) goes in URL when password is enabled
+- TypeScript strict Uint8Array compatibility with Web Crypto API
 
 ## Key Commands
 

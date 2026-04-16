@@ -160,7 +160,7 @@ export async function encryptKeyWithPassword(
   const encryptedKeyBuffer = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     derivedKey,
-    rawKey
+    rawKey.buffer.slice(rawKey.byteOffset, rawKey.byteOffset + rawKey.byteLength) as ArrayBuffer
   );
 
   const combined = new Uint8Array(12 + encryptedKeyBuffer.byteLength);

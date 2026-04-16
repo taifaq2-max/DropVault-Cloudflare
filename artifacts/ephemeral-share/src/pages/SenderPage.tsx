@@ -5,7 +5,6 @@ import {
   generateEncryptionKey,
   encryptPayload,
   encryptKeyWithPassword,
-  generatePassword,
   fileToBase64,
   type SharePayload,
 } from "@/lib/crypto";
@@ -13,6 +12,7 @@ import {
   formatBytes,
   formatDuration,
   TTL_OPTIONS,
+  generatePassword,
 } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -188,15 +188,14 @@ export default function SenderPage() {
   const testWebhook = useTestWebhook();
 
   useEffect(() => {
-    if (rateLimitSeconds > 0) {
-      const id = setInterval(() => {
-        setRateLimitSeconds((s) => {
-          if (s <= 1) { clearInterval(id); return 0; }
-          return s - 1;
-        });
-      }, 1000);
-      return () => clearInterval(id);
-    }
+    if (rateLimitSeconds <= 0) return;
+    const id = setInterval(() => {
+      setRateLimitSeconds((s) => {
+        if (s <= 1) { clearInterval(id); return 0; }
+        return s - 1;
+      });
+    }, 1000);
+    return () => clearInterval(id);
   }, [rateLimitSeconds]);
 
   const totalSize =
@@ -269,7 +268,7 @@ export default function SenderPage() {
   const handleTestWebhook = async () => {
     if (!webhookUrl) return;
     try {
-      const res = await testWebhook.mutateAsync({ webhookUrl });
+      const res = await testWebhook.mutateAsync({ data: { webhookUrl } });
       setWebhookTested(res.success);
     } catch {
       setWebhookTested(false);
@@ -331,25 +330,33 @@ export default function SenderPage() {
       const shareType = mode === "text" ? "text" : "files";
 
       const result = await createShare.mutateAsync({
-        encryptedData,
-        ttl,
-        passwordHash,
-        passwordSalt,
-        webhookUrl: webhookUrl || null,
-        webhookMessage: webhookMessage || null,
-        fileMetadata: mode === "files"
-          ? files.map((fi, i) => ({
-              name: fi.name,
-              size: fi.file.size,
-              type: fi.file.type,
-              originalIndex: i,
-            }))
-          : null,
-        shareType,
-        totalSize,
+        data: {
+          encryptedData,
+          ttl,
+          passwordHash,
+          passwordSalt,
+          webhookUrl: webhookUrl || null,
+          webhookMessage: webhookMessage || null,
+          fileMetadata: mode === "files"
+            ? files.map((fi, i) => ({
+                name: fi.name,
+                size: fi.file.size,
+                type: fi.file.type,
+                originalIndex: i,
+              }))
+            : null,
+          shareType,
+          totalSize,
+        },
       });
 
-      const url = `${window.location.origin}/share/${result.shareId}#key=${keyBase64Url}`;
+      // When password is set: put encrypted key in URL (receiver needs password to recover raw key)
+      // When no password: put raw key directly in URL
+      const keyForUrl = passwordEnabled && passwordHash
+        ? encodeURIComponent(passwordHash)
+        : keyBase64Url;
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const url = `${window.location.origin}${base}/share/${result.shareId}#key=${keyForUrl}`;
       setShareUrl(url);
       setExpiresAt(result.expiresAt);
       setShareCreated(true);

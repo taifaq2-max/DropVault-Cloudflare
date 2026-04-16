@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import os from "os";
 
 export interface FileMetadata {
   name: string;
@@ -110,8 +111,7 @@ export function getStats(): {
 }
 
 export function getAvailableMemoryMb(): number {
-  const memUsage = process.memoryUsage();
-  return (memUsage.heapTotal - memUsage.heapUsed) / 1024 / 1024;
+  return os.freemem() / 1024 / 1024;
 }
 
 export function cleanupExpired(): void {
