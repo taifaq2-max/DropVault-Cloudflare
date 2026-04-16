@@ -13,6 +13,7 @@ import { formatBytes } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import JSZip from "jszip";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 type Phase =
   | "loading"
@@ -331,14 +332,17 @@ export default function ReceiverPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="border-b border-border px-4 py-4 flex items-center gap-3">
-        <div className="w-8 h-8 border border-primary flex items-center justify-center">
-          <div className="w-3 h-3 bg-primary" />
+      <header className="border-b border-border px-4 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 border border-primary flex items-center justify-center">
+            <div className="w-3 h-3 bg-primary" />
+          </div>
+          <div>
+            <div className="font-mono text-sm font-bold tracking-widest">VAULTDROP</div>
+            <div className="text-xs text-muted-foreground font-mono">secure share receiver</div>
+          </div>
         </div>
-        <div>
-          <div className="font-mono text-sm font-bold tracking-widest">VAULTDROP</div>
-          <div className="text-xs text-muted-foreground font-mono">secure share receiver</div>
-        </div>
+        <ThemeToggle />
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-12">

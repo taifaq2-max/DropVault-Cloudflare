@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { Switch } from "@/components/ui/switch";
 
 const MAX_TOTAL_BYTES = 2.5 * 1024 * 1024;
@@ -407,6 +408,7 @@ export default function SenderPage() {
             </div>
           </div>
         </div>
+        <ThemeToggle />
       </header>
 
       <main className="max-w-2xl mx-auto px-4 py-8">

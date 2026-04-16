@@ -23,7 +23,7 @@ const ThemeProviderContext = createContext<ThemeProviderState>(initialState)
 export function ThemeProvider({
   children,
   defaultTheme = "dark",
-  storageKey = "vite-ui-theme",
+  storageKey = "vaultdrop-theme",
   ...props
 }: ThemeProviderProps) {
   const [theme, setTheme] = useState<Theme>(
@@ -33,19 +33,26 @@ export function ThemeProvider({
   useEffect(() => {
     const root = window.document.documentElement
 
-    root.classList.remove("light", "dark")
-
-    if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
-        .matches
-        ? "dark"
-        : "light"
-
-      root.classList.add(systemTheme)
-      return
+    function applyTheme() {
+      root.classList.remove("light", "dark")
+      if (theme === "system") {
+        const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
+          ? "dark"
+          : "light"
+        root.classList.add(systemTheme)
+      } else {
+        root.classList.add(theme)
+      }
     }
 
-    root.classList.add(theme)
+    applyTheme()
+
+    // When system mode is active, follow OS-level changes in real time
+    if (theme === "system") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)")
+      mq.addEventListener("change", applyTheme)
+      return () => mq.removeEventListener("change", applyTheme)
+    }
   }, [theme])
 
   const value = {
@@ -65,9 +72,7 @@ export function ThemeProvider({
 
 export const useTheme = () => {
   const context = useContext(ThemeProviderContext)
-
   if (context === undefined)
     throw new Error("useTheme must be used within a ThemeProvider")
-
   return context
 }
