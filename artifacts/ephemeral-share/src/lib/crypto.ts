@@ -214,22 +214,16 @@ export async function decryptKeyWithPassword(
 }
 
 export function generatePassword(): string {
-  const adjectives = [
-    "crimson", "silver", "golden", "azure", "cobalt", "ember", "frost",
-    "shadow", "steel", "amber", "jade", "onyx", "scarlet", "violet",
-    "copper", "indigo", "ivory", "obsidian", "ruby", "sapphire"
-  ];
-  const nouns = [
-    "falcon", "cipher", "vault", "raven", "ghost", "forge", "blade",
-    "echo", "titan", "nexus", "spectre", "orbit", "delta", "vector",
-    "apex", "nova", "prism", "quartz", "lynx", "cobra"
-  ];
-  const numArr = new Uint8Array(3);
-  crypto.getRandomValues(numArr);
-  const adj = adjectives[numArr[0] % adjectives.length];
-  const noun = nouns[numArr[1] % nouns.length];
-  const num = numArr[2] % 90 + 10;
-  return `${adj}-${noun}-${num}`;
+  const words1 = ["crimson", "silent", "hidden", "neon", "cyan", "amber", "phantom", "ghost", "stellar", "quantum", "velvet", "frost", "shadow", "cobalt", "obsidian", "silver", "golden", "azure", "scarlet", "indigo"];
+  const words2 = ["FALCON", "VAULT", "LOCK", "CIPHER", "MATRIX", "NEXUS", "PULSE", "SHARD", "PRISM", "FORGE", "SHIELD", "BLADE", "ECHO", "TITAN", "ORBIT", "DELTA", "APEX", "NOVA", "QUARTZ", "LYNX"];
+  const words3 = ["raven", "ghost", "cipher", "node", "forge", "prism", "echo", "blade", "nexus", "core", "wire", "grid", "spark", "wing", "key", "flux", "dash", "arc", "bolt", "dusk"];
+  const buf = new Uint8Array(4);
+  crypto.getRandomValues(buf);
+  const w1 = words1[buf[0] % words1.length];
+  const w2 = words2[buf[1] % words2.length];
+  const w3 = words3[buf[2] % words3.length];
+  const num = 10000 + (buf[3] * 353) % 90000;
+  return `${w1}-${w2}-${w3}-${num}`;
 }
 
 export function extractKeyFromFragment(): string | null {

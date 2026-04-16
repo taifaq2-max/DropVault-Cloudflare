@@ -42,12 +42,16 @@ export const TTL_OPTIONS: TtlOption[] = [
 ]
 
 export function generatePassword(): string {
-  const adjectives = ["crimson", "silent", "hidden", "dark", "neon", "cyan", "amber", "phantom", "ghost", "void", "stellar", "quantum", "iron", "steel", "glass", "velvet", "frost", "shadow", "cobalt", "obsidian"]
-  const nouns = ["falcon", "vault", "lock", "key", "cipher", "matrix", "nexus", "pulse", "spark", "echo", "shard", "prism", "forge", "shield", "core", "node", "blade", "wing", "wire", "grid"]
-  const adj = adjectives[Math.floor(Math.random() * adjectives.length)]
-  const noun = nouns[Math.floor(Math.random() * nouns.length)]
-  const num = Math.floor(Math.random() * 90) + 10
-  return `${adj}-${noun}-${num}`
+  const words1 = ["crimson", "silent", "hidden", "neon", "cyan", "amber", "phantom", "ghost", "stellar", "quantum", "velvet", "frost", "shadow", "cobalt", "obsidian", "silver", "golden", "azure", "scarlet", "indigo"]
+  const words2 = ["FALCON", "VAULT", "LOCK", "CIPHER", "MATRIX", "NEXUS", "PULSE", "SHARD", "PRISM", "FORGE", "SHIELD", "BLADE", "ECHO", "TITAN", "ORBIT", "DELTA", "APEX", "NOVA", "QUARTZ", "LYNX"]
+  const words3 = ["raven", "ghost", "cipher", "node", "forge", "prism", "echo", "blade", "nexus", "core", "wire", "grid", "spark", "wing", "key", "flux", "dash", "arc", "bolt", "dusk"]
+  const buf = new Uint8Array(4)
+  crypto.getRandomValues(buf)
+  const w1 = words1[buf[0] % words1.length]
+  const w2 = words2[buf[1] % words2.length]
+  const w3 = words3[buf[2] % words3.length]
+  const num = 10000 + (buf[3] * 353) % 90000
+  return `${w1}-${w2}-${w3}-${num}`
 }
 
 export interface HumorEntry {
