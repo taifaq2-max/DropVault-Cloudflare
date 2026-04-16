@@ -1,0 +1,68 @@
+# ────────────────────────────────────────────────────────────────────────────
+# VaultDrop — Production compose (TLS enabled)
+#
+# Prerequisites:
+#   - Copy .env.example → .env and fill in all values
+#   - Place TLS certificate files at the paths set in .env
+#     (default: ./certs/fullchain.pem and ./certs/privkey.pem)
+#
+# Start:  docker compose up -d --build
+# Stop:   docker compose down
+# Logs:   docker compose logs -f
+# ────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── API server (Express 5, in-memory share store) ────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    image: vaultdrop-api
+    restart: unless-stopped
+    environment:
+      PORT: "8080"
+      NODE_ENV: production
+      SESSION_SECRET: ${SESSION_SECRET}
+      DEBUG: ${DEBUG:-false}
+    networks:
+      - internal
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "require('http').get('http://localhost:8080/api/healthz',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    # Do NOT expose port 8080 to the host — traffic reaches the API only
+    # through the internal Docker network via the nginx proxy.
+
+  # ── nginx (TLS termination + static frontend + API proxy) ────────────────
+  nginx:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    image: vaultdrop-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # nginx config with TLS directives
+      - ./docker/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # TLS certificate (full chain: server cert + intermediates)
+      - ${TLS_CERT_PATH:-./certs/fullchain.pem}:/etc/nginx/certs/fullchain.pem:ro
+      # TLS private key
+      - ${TLS_KEY_PATH:-./certs/privkey.pem}:/etc/nginx/certs/privkey.pem:ro
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - internal
+
+networks:
+  internal:
+    driver: bridge

@@ -1,0 +1,47 @@
+# ────────────────────────────────────────────────────────────────────────────
+# Stage 1: Build
+# Uses Debian (gnu-libc) to match the pnpm-workspace platform overrides.
+# ────────────────────────────────────────────────────────────────────────────
+FROM node:24-slim AS builder
+
+RUN corepack enable
+
+WORKDIR /workspace
+
+# Copy workspace manifests first (better layer caching)
+COPY package.json pnpm-workspace.yaml .npmrc tsconfig.base.json tsconfig.json ./
+
+# Copy only the packages the API server depends on
+COPY lib/api-zod/        lib/api-zod/
+COPY lib/db/             lib/db/
+COPY lib/api-spec/       lib/api-spec/
+COPY artifacts/api-server/ artifacts/api-server/
+
+# Install all workspace deps (no --frozen-lockfile: lockfile not committed to git)
+RUN pnpm install --ignore-scripts
+
+# Build: esbuild bundles everything into a single dist/index.mjs
+RUN pnpm --filter @workspace/api-server run build
+
+# ────────────────────────────────────────────────────────────────────────────
+# Stage 2: Minimal runtime
+# The esbuild output is self-contained — no node_modules needed at runtime.
+# ────────────────────────────────────────────────────────────────────────────
+FROM node:24-slim AS runtime
+
+WORKDIR /app
+
+COPY --from=builder /workspace/artifacts/api-server/dist/ ./dist/
+
+# Non-root user
+RUN groupadd -r vaultdrop && useradd -r -g vaultdrop -s /usr/sbin/nologin vaultdrop
+USER vaultdrop
+
+ENV NODE_ENV=production
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:'+process.env.PORT+'/api/healthz',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"
+
+CMD ["node", "--enable-source-maps", "./dist/index.mjs"]

@@ -1,0 +1,34 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies (installed inside the container)
+**/node_modules
+
+# Build outputs
+**/dist
+**/.cache
+
+# Replit-specific files not needed in the image
+.replit
+.replitignore
+.local/
+**/.replit-artifact/
+
+# Editor and OS
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
+
+# Secrets — never bake these into the image
+.env
+certs/
+
+# Test and documentation artefacts
+*.md
+attached_assets/
+
+# Lock file (large; we run pnpm install without --frozen-lockfile in Docker)
+pnpm-lock.yaml
