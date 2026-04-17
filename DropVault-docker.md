@@ -1,5 +1,7 @@
 # VaultDrop — Docker Deployment Guide
 
+[![CI](https://github.com/taifaq2-max/DropVault/actions/workflows/ci.yml/badge.svg)](https://github.com/taifaq2-max/DropVault/actions/workflows/ci.yml)
+
 Zero-knowledge ephemeral sharing, containerised. Two services: an **Express 5 API** and an **nginx** reverse proxy that serves the static frontend and terminates TLS.
 
 ---
