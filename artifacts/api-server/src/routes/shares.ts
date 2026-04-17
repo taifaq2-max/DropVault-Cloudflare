@@ -79,8 +79,8 @@ router.post("/shares", async (req: Request, res: Response) => {
     const token = (req.body as Record<string, unknown>)?.captchaToken;
     if (!token || typeof token !== "string") {
       res.status(400).json({
-        error: "captcha_required",
-        message: "CAPTCHA validation is required. Please complete the challenge.",
+        error: "captcha_failed",
+        message: "CAPTCHA validation failed. Please try again.",
       });
       return;
     }

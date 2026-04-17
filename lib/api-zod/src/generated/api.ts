@@ -73,8 +73,9 @@ export const CreateShareBody = zod.object({
   totalSize: zod.number().describe("Total size of the payload in bytes"),
   captchaToken: zod
     .string()
-    .nullish()
-    .describe("hCaptcha token (optional in dev mode)"),
+    .describe(
+      "hCaptcha response token; empty string accepted only when server-side verification is disabled (dev mode)",
+    ),
 });
 
 /**

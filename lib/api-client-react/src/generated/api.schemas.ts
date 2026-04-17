@@ -55,8 +55,8 @@ export interface CreateShareRequest {
   shareType: CreateShareRequestShareType;
   /** Total size of the payload in bytes */
   totalSize: number;
-  /** hCaptcha token (optional in dev mode) */
-  captchaToken?: string | null;
+  /** hCaptcha response token; empty string accepted only when server-side verification is disabled (dev mode) */
+  captchaToken: string;
 }
 
 export interface CreateShareResponse {

@@ -362,7 +362,7 @@ export default function SenderPage() {
             : null,
           shareType,
           totalSize,
-          captchaToken: captchaToken || null,
+          captchaToken: captchaToken,
         },
       });
 

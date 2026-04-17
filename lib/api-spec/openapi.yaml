@@ -307,13 +307,13 @@ components:
           description: Total size of the payload in bytes
         captchaToken:
           type: string
-          nullable: true
-          description: hCaptcha token (optional in dev mode)
+          description: hCaptcha response token; empty string accepted only when server-side verification is disabled (dev mode)
       required:
         - encryptedData
         - ttl
         - shareType
         - totalSize
+        - captchaToken
 
     CreateShareResponse:
       type: object
