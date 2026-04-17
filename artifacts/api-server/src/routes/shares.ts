@@ -18,6 +18,24 @@ import {
 
 const router: IRouter = Router();
 
+const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET_KEY ?? "";
+const HCAPTCHA_VERIFY_URL = "https://api.hcaptcha.com/siteverify";
+
+async function verifyCaptcha(token: string, ip: string): Promise<boolean> {
+  const params = new URLSearchParams({
+    secret: HCAPTCHA_SECRET,
+    response: token,
+    remoteip: ip,
+  });
+  const res = await fetch(HCAPTCHA_VERIFY_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+  const data = (await res.json()) as { success: boolean };
+  return data.success === true;
+}
+
 const MAX_SHARE_SIZE_BYTES = 2.5 * 1024 * 1024; // 2.5 MB
 const MIN_MEMORY_MB = 10; // Require at least 10 MB free
 
@@ -54,6 +72,34 @@ router.post("/shares", async (req: Request, res: Response) => {
       retryAfterSeconds: rateLimit.retryAfterSeconds,
     });
     return;
+  }
+
+  // hCaptcha verification (skipped when HCAPTCHA_SECRET_KEY is not configured)
+  if (HCAPTCHA_SECRET) {
+    const token = (req.body as Record<string, unknown>)?.captchaToken;
+    if (!token || typeof token !== "string") {
+      res.status(400).json({
+        error: "captcha_required",
+        message: "CAPTCHA validation is required. Please complete the challenge.",
+      });
+      return;
+    }
+    try {
+      const valid = await verifyCaptcha(token, ip);
+      if (!valid) {
+        res.status(400).json({
+          error: "captcha_failed",
+          message: "CAPTCHA validation failed. Please try again.",
+        });
+        return;
+      }
+    } catch {
+      res.status(400).json({
+        error: "captcha_error",
+        message: "CAPTCHA validation failed. Please try again.",
+      });
+      return;
+    }
   }
 
   const parsed = CreateShareBody.safeParse(req.body);

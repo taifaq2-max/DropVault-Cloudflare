@@ -195,10 +195,19 @@ curl -sk https://yourdomain.com/api/healthz
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `SESSION_SECRET` | **Yes** | — | Signs session tokens. Use `openssl rand -hex 64`. Minimum 32 chars. |
+| `HCAPTCHA_SECRET_KEY` | Production | — | hCaptcha server-side secret key. Obtain from [hcaptcha.com](https://dashboard.hcaptcha.com). Omit only in dev/testing. |
+| `VITE_HCAPTCHA_SITE_KEY` | Production | — | hCaptcha public site key. Passed as a Docker **build argument** (not a runtime env var). See note below. |
 | `TLS_CERT_PATH` | Production | `./certs/fullchain.pem` | Host path to TLS certificate (full chain PEM). |
 | `TLS_KEY_PATH` | Production | `./certs/privkey.pem` | Host path to TLS private key PEM. |
 | `DEBUG` | No | `false` | Set `true` to enable verbose request logging in the API. |
 | `PORT` | Internal | `8080` | API listen port inside the container. Do not change unless you also update `nginx.conf`. |
+
+> **hCaptcha build note:** `VITE_HCAPTCHA_SITE_KEY` is a Vite build-time variable — it gets baked into the static JS bundle, not read at runtime. Pass it when building the image:
+> ```bash
+> VITE_HCAPTCHA_SITE_KEY=your_site_key docker compose up -d --build
+> # or add it to your shell environment / CI secrets before running compose
+> ```
+> The `docker-compose.yml` already reads it via `${VITE_HCAPTCHA_SITE_KEY:-}` and forwards it as a build arg. If the variable is absent, the captcha widget is hidden and the server skips verification (dev-only escape hatch).
 
 ---
 

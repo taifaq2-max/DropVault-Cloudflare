@@ -15,6 +15,12 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+if (!process.env.HCAPTCHA_SECRET_KEY) {
+  logger.warn(
+    "HCAPTCHA_SECRET_KEY is not set — captcha verification is DISABLED (dev mode only)",
+  );
+}
+
 app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");

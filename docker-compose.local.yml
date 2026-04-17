@@ -19,6 +19,7 @@ services:
       PORT: "8080"
       NODE_ENV: production
       SESSION_SECRET: ${SESSION_SECRET:-change-me-this-is-not-secure}
+      HCAPTCHA_SECRET_KEY: ${HCAPTCHA_SECRET_KEY:-}
       DEBUG: ${DEBUG:-true}
     networks:
       - internal
@@ -37,6 +38,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.frontend
+      args:
+        VITE_HCAPTCHA_SITE_KEY: ${VITE_HCAPTCHA_SITE_KEY:-}
     image: vaultdrop-frontend
     restart: unless-stopped
     ports:

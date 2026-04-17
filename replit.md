@@ -26,6 +26,7 @@ A zero-knowledge, one-time file and text sharing platform. Encrypted client-side
 - Configurable TTL: 1m, 15m, 1h, 36h, 1d, 4d
 - One-time access: share deleted after receiver downloads/copies
 - Rate limiting: 3 shares/minute per IP
+- hCaptcha on every share creation (SRS FR-8.2/SEC-5.2); skipped when `HCAPTCHA_SECRET_KEY` not set
 - Optional webhook notifications (fire-and-forget)
 - Dark/Light mode, PWA-capable, WCAG 2.1 AA
 - Health endpoint with random API key (printed at startup)

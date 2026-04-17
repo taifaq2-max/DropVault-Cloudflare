@@ -21,7 +21,11 @@ RUN pnpm install --ignore-scripts
 
 # BASE_PATH and PORT are required by vite.config.ts at build time.
 # PORT is not used in the static output; BASE_PATH sets the asset prefix.
+# VITE_HCAPTCHA_SITE_KEY is baked into the frontend bundle at build time.
 ENV BASE_PATH=/ PORT=3000 NODE_ENV=production
+
+ARG VITE_HCAPTCHA_SITE_KEY=""
+ENV VITE_HCAPTCHA_SITE_KEY=$VITE_HCAPTCHA_SITE_KEY
 
 RUN pnpm --filter @workspace/ephemeral-share run build
 

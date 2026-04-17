@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useCreateShare, useTestWebhook } from "@workspace/api-client-react";
+import HCaptcha from "@hcaptcha/react-hcaptcha";
 import {
   generateEncryptionKey,
   encryptPayload,
@@ -19,7 +20,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useTheme } from "@/components/theme-provider";
 import { Switch } from "@/components/ui/switch";
+
+const HCAPTCHA_SITE_KEY = import.meta.env.VITE_HCAPTCHA_SITE_KEY as string | undefined;
 
 const MAX_TOTAL_BYTES = 2.5 * 1024 * 1024;
 const MAX_FILES = 10;
@@ -183,7 +187,17 @@ export default function SenderPage() {
   const [webhookTested, setWebhookTested] = useState<null | boolean>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [captchaToken, setCaptchaToken] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const captchaRef = useRef<HCaptcha>(null);
+
+  const { theme } = useTheme();
+  const captchaTheme: "dark" | "light" =
+    theme === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches
+        ? "dark"
+        : "light"
+      : (theme as "dark" | "light");
 
   const createShare = useCreateShare();
   const testWebhook = useTestWebhook();
@@ -348,8 +362,12 @@ export default function SenderPage() {
             : null,
           shareType,
           totalSize,
+          captchaToken: captchaToken || null,
         },
       });
+
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken("");
 
       // When password is set: put encrypted key in URL (receiver needs password to recover raw key)
       // When no password: put raw key directly in URL
@@ -362,6 +380,8 @@ export default function SenderPage() {
       setExpiresAt(result.expiresAt);
       setShareCreated(true);
     } catch (err: unknown) {
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken("");
       // Check for rate limit
       const anyErr = err as { response?: { data?: { retryAfterSeconds?: number; message?: string } } };
       if (anyErr?.response?.data?.retryAfterSeconds) {
@@ -383,6 +403,8 @@ export default function SenderPage() {
     setFiles([]);
     setPassword(generatePassword());
     setError("");
+    setCaptchaToken("");
+    captchaRef.current?.resetCaptcha();
   };
 
   const copyPassword = async () => {
@@ -776,6 +798,20 @@ export default function SenderPage() {
                 )}
               </AnimatePresence>
 
+              {/* hCaptcha widget */}
+              {HCAPTCHA_SITE_KEY && (
+                <div className="flex justify-center" aria-label="Human verification">
+                  <HCaptcha
+                    ref={captchaRef}
+                    sitekey={HCAPTCHA_SITE_KEY}
+                    theme={captchaTheme}
+                    onVerify={(token) => setCaptchaToken(token)}
+                    onExpire={() => setCaptchaToken("")}
+                    onError={() => setCaptchaToken("")}
+                  />
+                </div>
+              )}
+
               {/* Submit */}
               <motion.div whileTap={{ scale: 0.99 }}>
                 <Button
@@ -785,7 +821,8 @@ export default function SenderPage() {
                     createShare.isPending ||
                     rateLimitSeconds > 0 ||
                     (mode === "text" && !text.trim()) ||
-                    (mode === "files" && files.length === 0)
+                    (mode === "files" && files.length === 0) ||
+                    (!!HCAPTCHA_SITE_KEY && !captchaToken)
                   }
                   className="w-full font-mono tracking-widest text-sm py-6"
                   aria-label="Create secure share"
