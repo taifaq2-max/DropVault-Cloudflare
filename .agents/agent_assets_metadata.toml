@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "jzd0yEVKjTjVnmrVWAwOd"
+uri = "file://deployment.md"
+type = "text"
+title = "VaultDrop Deployment Guide (Cloudflare + Teams)"
