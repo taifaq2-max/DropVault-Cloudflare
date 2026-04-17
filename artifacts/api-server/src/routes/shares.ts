@@ -160,7 +160,7 @@ router.post("/shares", async (req: Request, res: Response) => {
 
 // GET /api/shares/:shareId/peek — peek without consuming
 router.get("/shares/:shareId/peek", (req: Request, res: Response) => {
-  const { shareId } = req.params;
+  const shareId = req.params["shareId"] as string;
 
   const share = getShare(shareId);
 
@@ -204,7 +204,7 @@ router.get("/shares/:shareId/peek", (req: Request, res: Response) => {
 
 // GET /api/shares/:shareId — retrieve and mark accessed
 router.get("/shares/:shareId", (req: Request, res: Response) => {
-  const { shareId } = req.params;
+  const shareId = req.params["shareId"] as string;
 
   const share = getShare(shareId);
 
@@ -253,7 +253,7 @@ router.get("/shares/:shareId", (req: Request, res: Response) => {
 
 // DELETE /api/shares/:shareId — delete after download complete
 router.delete("/shares/:shareId", async (req: Request, res: Response) => {
-  const { shareId } = req.params;
+  const shareId = req.params["shareId"] as string;
 
   const share = getShare(shareId);
 

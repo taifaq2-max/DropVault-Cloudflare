@@ -53,6 +53,7 @@ export function ThemeProvider({
       mq.addEventListener("change", applyTheme)
       return () => mq.removeEventListener("change", applyTheme)
     }
+    return undefined
   }, [theme])
 
   const value = {

@@ -1,2 +1,15 @@
 export * from "./generated/api";
-export * from "./generated/types";
+export type {
+  CreateShareRequest,
+  CreateShareRequestShareType,
+  CreateShareResponse,
+  DetailedHealthStatus,
+  ErrorResponse,
+  FileMetadata,
+  GetShareResponseShareType,
+  HealthStatus,
+  PeekShareResponseShareType,
+  RateLimitErrorResponse,
+  ShareErrorResponse,
+  TestWebhookRequest,
+} from "./generated/types";
