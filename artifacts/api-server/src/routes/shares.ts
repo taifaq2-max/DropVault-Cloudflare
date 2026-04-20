@@ -8,7 +8,7 @@ import {
   fireWebhook,
   getAvailableMemoryMb,
 } from "../services/shareManager.js";
-import { checkRateLimit } from "../services/rateLimiter.js";
+import { checkRateLimit, checkPeekRateLimit } from "../services/rateLimiter.js";
 import {
   CreateShareBody,
   GetShareParams,
@@ -213,6 +213,17 @@ router.post("/shares", async (req: Request, res: Response) => {
 router.get("/shares/:shareId/peek", async (req: Request, res: Response) => {
   const shareId = req.params["shareId"] as string;
   const ip = getClientIp(req);
+
+  const peekLimit = checkPeekRateLimit(ip);
+  if (!peekLimit.allowed) {
+    res.setHeader("Retry-After", String(peekLimit.retryAfterSeconds));
+    res.status(429).json({
+      error: "rate_limit_exceeded",
+      message: "Too many requests. Please wait before trying again.",
+      retryAfterSeconds: peekLimit.retryAfterSeconds,
+    });
+    return;
+  }
 
   // hCaptcha verification (skipped when HCAPTCHA_SECRET_KEY is not configured)
   if (HCAPTCHA_SECRET) {

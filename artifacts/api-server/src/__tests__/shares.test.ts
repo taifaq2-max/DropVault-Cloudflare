@@ -2,10 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
 
 vi.mock("../services/rateLimiter.js", () => ({
-  checkRateLimit: () => ({ allowed: true, retryAfterSeconds: 0 }),
+  checkRateLimit: vi.fn(() => ({ allowed: true, retryAfterSeconds: 0 })),
+  checkPeekRateLimit: vi.fn(() => ({ allowed: true, retryAfterSeconds: 0 })),
 }));
 
 const { default: app } = await import("../app.js");
+const { checkPeekRateLimit } = await import("../services/rateLimiter.js");
 
 const VALID_SHARE_BODY = {
   encryptedData: "aGVsbG93b3JsZA==",
@@ -83,6 +85,20 @@ describe("GET /api/shares/:shareId/peek", () => {
     const res = await request(app).get("/api/shares/nonexistent-id-xyz/peek");
     expect(res.status).toBe(404);
     expect(res.body.error).toBe("not_found");
+  });
+
+  it("returns 429 with Retry-After header when peek rate limit is exceeded", async () => {
+    vi.mocked(checkPeekRateLimit).mockReturnValueOnce({
+      allowed: false,
+      retryAfterSeconds: 42,
+    });
+
+    const res = await request(app).get("/api/shares/any-share-id/peek");
+
+    expect(res.status).toBe(429);
+    expect(res.body.error).toBe("rate_limit_exceeded");
+    expect(res.body.retryAfterSeconds).toBe(42);
+    expect(res.headers["retry-after"]).toBe("42");
   });
 });
 
