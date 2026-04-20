@@ -111,8 +111,14 @@ export class CloudflareAdapter implements StorageAdapter {
         meta.accessed = true;
         meta.accessedAt = accessedAt;
         // Write back so future reads skip the DO call.
+        // Preserve the original TTL rather than hardcoding 60 s so that
+        // post-access observability windows remain intact.
+        const remainingSeconds = Math.max(
+          Math.ceil((new Date(meta.expiresAt).getTime() - Date.now()) / 1000),
+          60
+        );
         await this.env.SHARE_KV.put(this.shareKey(shareId), JSON.stringify(meta), {
-          expirationTtl: 60,
+          expirationTtl: remainingSeconds,
         });
       }
     }

@@ -171,7 +171,7 @@ app.post("/api/shares", async (c) => {
       passwordSalt: (body["passwordSalt"] as string | null) ?? null,
       webhookUrl: (body["webhookUrl"] as string | null) ?? null,
       webhookMessage: (body["webhookMessage"] as string | null) ?? null,
-      fileMetadata: (body["fileMetadata"] as null) ?? null,
+      fileMetadata: Array.isArray(body["fileMetadata"]) ? (body["fileMetadata"] as import("./adapters/types.js").FileMetaItem[]) : null,
       captchaRequired: Boolean(c.env.HCAPTCHA_SECRET_KEY),
     },
     adapter
@@ -203,7 +203,7 @@ app.post("/api/shares/upload-url", async (c) => {
       passwordSalt: (body["passwordSalt"] as string | null) ?? null,
       webhookUrl: (body["webhookUrl"] as string | null) ?? null,
       webhookMessage: (body["webhookMessage"] as string | null) ?? null,
-      fileMetadata: (body["fileMetadata"] as null) ?? null,
+      fileMetadata: Array.isArray(body["fileMetadata"]) ? (body["fileMetadata"] as import("./adapters/types.js").FileMetaItem[]) : null,
       captchaRequired: Boolean(c.env.HCAPTCHA_SECRET_KEY),
     },
     adapter

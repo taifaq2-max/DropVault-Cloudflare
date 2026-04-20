@@ -197,18 +197,24 @@ are automatically picked up by Cloudflare Pages. They configure:
 
 ## Step 6 — Route `/api/*` requests to the Worker
 
-The frontend calls `/api/*` on the same origin. Pages doesn't run the
-Worker by default — use one of these approaches:
+The frontend uses **relative `/api/*` paths** (no `VITE_API_URL` env var
+required). For this to work, `/api/*` traffic must be routed to the Worker
+from the same origin as the Pages site — not from a different URL.
 
-### Option A — Custom domain + Worker Routes (recommended)
+**Choose exactly one option below and follow it completely.** Mixing
+approaches or setting `VITE_API_URL` to the Worker's `workers.dev` URL
+while also using Option A/B will break CORS and cause 404s.
+
+### Option A — Custom domain + Worker Routes (recommended for production)
 
 1. Add your domain to Cloudflare
 2. Route `yourdomain.com/api/*` to the Worker via **Workers & Pages → your
    Worker → Triggers → Routes**
 3. Route `yourdomain.com/*` to your Pages project
 4. Update `FRONTEND_URL` in `wrangler.toml` to `https://yourdomain.com`
+5. Leave `VITE_API_URL` **unset** in Pages — the frontend uses relative `/api/*`
 
-### Option B — Pages Function proxy (no custom domain)
+### Option B — Pages Function proxy (no custom domain, e.g. `*.pages.dev`)
 
 Create `artifacts/ephemeral-share/functions/api/[[route]].ts`:
 
