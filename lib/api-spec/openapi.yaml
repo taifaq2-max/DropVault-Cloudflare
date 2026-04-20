@@ -107,10 +107,12 @@ paths:
             type: string
             minLength: 64
             maxLength: 64
-        - name: captchaToken
+        - name: accessNonce
           in: query
           required: false
-          description: hCaptcha verification token (required when server has HCAPTCHA_SECRET_KEY set)
+          description: |
+            HMAC-SHA256 nonce issued by the peek endpoint. Required when the
+            server has HCAPTCHA_SECRET_KEY configured. Format: base64url(sig).timestamp
           schema:
             type: string
       responses:
@@ -120,8 +122,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/GetShareResponse"
-        "400":
-          description: CAPTCHA validation failed
+        "403":
+          description: Missing or invalid access nonce (only when HCAPTCHA_SECRET_KEY is set)
           content:
             application/json:
               schema:
@@ -397,6 +399,12 @@ components:
           type: integer
         expiresAt:
           type: string
+        accessNonce:
+          type: string
+          description: |
+            HMAC-SHA256 nonce to be passed as ?accessNonce= when calling GET
+            /shares/{shareId}. Only present when HCAPTCHA_SECRET_KEY is set
+            on the server. Valid for 5 minutes.
       required:
         - totalSize
         - passwordRequired
