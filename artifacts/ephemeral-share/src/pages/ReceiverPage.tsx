@@ -102,7 +102,6 @@ export default function ReceiverPage() {
   const [textCopied, setTextCopied] = useState(false);
   const [humor] = useState(pickHumor);
   const [errorMessage, setErrorMessage] = useState("");
-  const [captchaErrorMessage, setCaptchaErrorMessage] = useState("");
   const [zipProgress, setZipProgress] = useState(0);
   const [zipping, setZipping] = useState(false);
 
@@ -156,8 +155,6 @@ export default function ReceiverPage() {
     try {
       const data = await fetchPeek(captchaToken);
       setPeekData(data);
-      captchaRef.current?.resetCaptcha();
-      setCaptchaToken("");
       setPhase("warning");
     } catch (err: unknown) {
       captchaRef.current?.resetCaptcha();
@@ -186,10 +183,9 @@ export default function ReceiverPage() {
     }
   };
 
-  const fetchShare = useCallback(async (token?: string): Promise<GetShareData | null> => {
+  const fetchShare = useCallback(async (): Promise<GetShareData | null> => {
     const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     const url = new URL(`${window.location.origin}${base}/api/shares/${shareId}`);
-    if (token) url.searchParams.set("captchaToken", token);
     const res = await fetch(url.toString());
     if (!res.ok) {
       const data = await res.json().catch(() => ({})) as { humorousMessage?: string; message?: string };
@@ -209,10 +205,8 @@ export default function ReceiverPage() {
     setPhase("decrypting");
 
     try {
-      const data = await fetchShare(captchaToken || undefined);
+      const data = await fetchShare();
       if (!data) throw new Error("No data returned");
-      captchaRef.current?.resetCaptcha();
-      setCaptchaToken("");
       setShareData(data);
 
       if (data.passwordRequired) {
@@ -222,20 +216,13 @@ export default function ReceiverPage() {
 
       await decrypt(data.encryptedData, keyFragment, null, null);
     } catch (err: unknown) {
-      captchaRef.current?.resetCaptcha();
-      setCaptchaToken("");
-      const anyErr = err as { data?: { error?: string; humorousMessage?: string; message?: string } };
-      if (anyErr?.data?.error === "captcha_failed") {
-        setCaptchaErrorMessage("Human verification failed. Please complete the captcha and try again.");
-        setPhase("warning");
-      } else {
-        setErrorMessage(
-          anyErr?.data?.humorousMessage ??
-            anyErr?.data?.message ??
-            "Failed to retrieve share."
-        );
-        setPhase("error");
-      }
+      const anyErr = err as { data?: { humorousMessage?: string; message?: string } };
+      setErrorMessage(
+        anyErr?.data?.humorousMessage ??
+          anyErr?.data?.message ??
+          "Failed to retrieve share."
+      );
+      setPhase("error");
     }
   };
 
@@ -475,34 +462,12 @@ export default function ReceiverPage() {
                 ))}
               </div>
 
-              {/* hCaptcha widget */}
-              {HCAPTCHA_SITE_KEY && (
-                <div className="space-y-3">
-                  <div className="flex justify-center" aria-label="Human verification">
-                    <HCaptcha
-                      ref={captchaRef}
-                      sitekey={HCAPTCHA_SITE_KEY}
-                      theme={captchaTheme}
-                      onVerify={(token) => { setCaptchaToken(token); setCaptchaErrorMessage(""); }}
-                      onExpire={() => setCaptchaToken("")}
-                      onError={() => setCaptchaToken("")}
-                    />
-                  </div>
-                  {captchaErrorMessage && (
-                    <div className="text-sm font-mono text-destructive text-center" role="alert">
-                      {captchaErrorMessage}
-                    </div>
-                  )}
-                </div>
-              )}
-
               <div className="flex gap-4">
                 <Button variant="outline" onClick={() => navigate("/")} className="flex-1 font-mono" aria-label="Go back without accessing">
                   Go Back
                 </Button>
                 <Button
                   onClick={handleAccess}
-                  disabled={!!HCAPTCHA_SITE_KEY && !captchaToken}
                   className="flex-1 font-mono shadow-[0_0_16px_rgba(0,255,255,0.2)]"
                   aria-label="Access data"
                 >

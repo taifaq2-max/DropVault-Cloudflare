@@ -245,35 +245,6 @@ router.get("/shares/:shareId/peek", async (req: Request, res: Response) => {
 // GET /api/shares/:shareId — retrieve and mark accessed
 router.get("/shares/:shareId", async (req: Request, res: Response) => {
   const shareId = req.params["shareId"] as string;
-  const ip = getClientIp(req);
-
-  // hCaptcha verification (skipped when HCAPTCHA_SECRET_KEY is not configured)
-  if (HCAPTCHA_SECRET) {
-    const token = req.query["captchaToken"];
-    if (!token || typeof token !== "string") {
-      res.status(400).json({
-        error: "captcha_failed",
-        message: "CAPTCHA validation failed. Please try again.",
-      });
-      return;
-    }
-    try {
-      const valid = await verifyCaptcha(token, ip);
-      if (!valid) {
-        res.status(400).json({
-          error: "captcha_failed",
-          message: "CAPTCHA validation failed. Please try again.",
-        });
-        return;
-      }
-    } catch {
-      res.status(400).json({
-        error: "captcha_error",
-        message: "CAPTCHA validation failed. Please try again.",
-      });
-      return;
-    }
-  }
 
   const share = getShare(shareId);
 
