@@ -107,6 +107,7 @@ export default function ReceiverPage() {
 
   // hCaptcha state
   const [captchaToken, setCaptchaToken] = useState("");
+  const [captchaGateError, setCaptchaGateError] = useState("");
   const captchaRef = useRef<HCaptcha>(null);
   const captchaTheme: "dark" | "light" = theme === "dark" ? "dark" : "light";
 
@@ -122,7 +123,7 @@ export default function ReceiverPage() {
     if (token) url.searchParams.set("captchaToken", token);
     const res = await fetch(url.toString());
     if (!res.ok) {
-      const data = await res.json().catch(() => ({})) as { humorousMessage?: string; message?: string };
+      const data = await res.json().catch(() => ({})) as { error?: string; humorousMessage?: string; message?: string };
       throw { status: res.status, data };
     }
     return res.json() as Promise<{ totalSize: number; passwordRequired: boolean; shareType: string; fileCount: number; expiresAt: string }>;
@@ -155,17 +156,23 @@ export default function ReceiverPage() {
     try {
       const data = await fetchPeek(captchaToken);
       setPeekData(data);
+      setCaptchaGateError("");
       setPhase("warning");
     } catch (err: unknown) {
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
-      const anyErr = err as { data?: { humorousMessage?: string; message?: string } };
-      setErrorMessage(
-        anyErr?.data?.humorousMessage ??
-          anyErr?.data?.message ??
-          "Share not found or expired."
-      );
-      setPhase("error");
+      const anyErr = err as { data?: { error?: string; humorousMessage?: string; message?: string } };
+      if (anyErr?.data?.error === "captcha_failed") {
+        // Stay on the captcha screen — show a retry message instead of the error page
+        setCaptchaGateError("Verification failed. Please complete the captcha again.");
+      } else {
+        setErrorMessage(
+          anyErr?.data?.humorousMessage ??
+            anyErr?.data?.message ??
+            "Share not found or expired."
+        );
+        setPhase("error");
+      }
     } finally {
       setPeekLoading(false);
     }
@@ -409,11 +416,16 @@ export default function ReceiverPage() {
                   ref={captchaRef}
                   sitekey={HCAPTCHA_SITE_KEY!}
                   theme={captchaTheme}
-                  onVerify={(token) => setCaptchaToken(token)}
+                  onVerify={(token) => { setCaptchaToken(token); setCaptchaGateError(""); }}
                   onExpire={() => setCaptchaToken("")}
                   onError={() => setCaptchaToken("")}
                 />
               </div>
+              {captchaGateError && (
+                <p className="text-sm font-mono text-destructive" role="alert">
+                  {captchaGateError}
+                </p>
+              )}
               <Button
                 onClick={handlePeekWithCaptcha}
                 disabled={!captchaToken || peekLoading}
