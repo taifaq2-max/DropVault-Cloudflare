@@ -179,6 +179,12 @@ paths:
             type: string
             minLength: 64
             maxLength: 64
+        - name: captchaToken
+          in: query
+          required: false
+          schema:
+            type: string
+          description: hCaptcha response token (required when server has HCAPTCHA_SECRET_KEY configured)
       responses:
         "200":
           description: Share metadata
@@ -186,6 +192,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/PeekShareResponse"
+        "400":
+          description: CAPTCHA validation failed (only returned when server has HCAPTCHA_SECRET_KEY configured)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "404":
           description: Share not found or expired
           content:

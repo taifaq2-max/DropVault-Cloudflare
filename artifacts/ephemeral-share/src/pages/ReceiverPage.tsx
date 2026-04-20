@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { usePeekShare, useDeleteShare } from "@workspace/api-client-react";
+import { useDeleteShare } from "@workspace/api-client-react";
 import HCaptcha from "@hcaptcha/react-hcaptcha";
 import {
   importKeyFromBase64Url,
@@ -20,6 +20,7 @@ import { useTheme } from "@/components/theme-provider";
 const HCAPTCHA_SITE_KEY = import.meta.env.VITE_HCAPTCHA_SITE_KEY as string | undefined;
 
 type Phase =
+  | "captcha"
   | "loading"
   | "warning"
   | "password"
@@ -93,7 +94,7 @@ export default function ReceiverPage() {
   const shareId = params?.shareId ?? "";
   const { theme } = useTheme();
 
-  const [phase, setPhase] = useState<Phase>("loading");
+  const [phase, setPhase] = useState<Phase>(HCAPTCHA_SITE_KEY ? "captcha" : "loading");
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [payload, setPayload] = useState<SharePayload | null>(null);
@@ -111,26 +112,66 @@ export default function ReceiverPage() {
 
   // Persisted share data across phases
   const [shareData, setShareData] = useState<GetShareData | null>(null);
+  const [peekData, setPeekData] = useState<{ totalSize: number; passwordRequired: boolean; shareType: string; fileCount: number; expiresAt: string } | null>(null);
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const peekQuery = usePeekShare(shareId, { query: { enabled: !!shareId, retry: false } as any });
   const deleteShareMutation = useDeleteShare();
 
+  const fetchPeek = useCallback(async (token?: string) => {
+    const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+    const url = new URL(`${window.location.origin}${base}/api/shares/${shareId}/peek`);
+    if (token) url.searchParams.set("captchaToken", token);
+    const res = await fetch(url.toString());
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({})) as { humorousMessage?: string; message?: string };
+      throw { status: res.status, data };
+    }
+    return res.json() as Promise<{ totalSize: number; passwordRequired: boolean; shareType: string; fileCount: number; expiresAt: string }>;
+  }, [shareId]);
+
   useEffect(() => {
-    if (peekQuery.isSuccess) {
+    if (phase !== "loading") return;
+    fetchPeek()
+      .then((data) => {
+        setPeekData(data);
+        setPhase("warning");
+      })
+      .catch((err: unknown) => {
+        const anyErr = err as { data?: { humorousMessage?: string; message?: string } };
+        setErrorMessage(
+          anyErr?.data?.humorousMessage ??
+            anyErr?.data?.message ??
+            "Share not found or expired."
+        );
+        setPhase("error");
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
+  const [peekLoading, setPeekLoading] = useState(false);
+
+  const handlePeekWithCaptcha = async () => {
+    if (!captchaToken) return;
+    setPeekLoading(true);
+    try {
+      const data = await fetchPeek(captchaToken);
+      setPeekData(data);
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken("");
       setPhase("warning");
-    } else if (peekQuery.isError) {
-      const err = peekQuery.error as {
-        response?: { data?: { humorousMessage?: string; message?: string } };
-      };
+    } catch (err: unknown) {
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken("");
+      const anyErr = err as { data?: { humorousMessage?: string; message?: string } };
       setErrorMessage(
-        err?.response?.data?.humorousMessage ??
-          err?.response?.data?.message ??
+        anyErr?.data?.humorousMessage ??
+          anyErr?.data?.message ??
           "Share not found or expired."
       );
       setPhase("error");
+    } finally {
+      setPeekLoading(false);
     }
-  }, [peekQuery.isSuccess, peekQuery.isError, peekQuery.error]);
+  };
 
   const extractKey = (): string | null => {
     const hash = window.location.hash;
@@ -344,8 +385,6 @@ export default function ReceiverPage() {
     setTextCopied(true);
   };
 
-  const peekData = peekQuery.data;
-
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border px-4 py-4 flex items-center justify-between">
@@ -363,6 +402,35 @@ export default function ReceiverPage() {
 
       <main className="max-w-2xl mx-auto px-4 py-12">
         <AnimatePresence mode="wait">
+
+          {/* Captcha gate (shown before peek fires, only when site key is configured) */}
+          {phase === "captcha" && (
+            <motion.div key="captcha" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}
+              className="space-y-8 text-center">
+              <div className="space-y-3">
+                <div className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Human Verification</div>
+                <p className="text-muted-foreground font-mono text-sm">Please complete the check below to access this share.</p>
+              </div>
+              <div className="flex justify-center" aria-label="Human verification">
+                <HCaptcha
+                  ref={captchaRef}
+                  sitekey={HCAPTCHA_SITE_KEY!}
+                  theme={captchaTheme}
+                  onVerify={(token) => setCaptchaToken(token)}
+                  onExpire={() => setCaptchaToken("")}
+                  onError={() => setCaptchaToken("")}
+                />
+              </div>
+              <Button
+                onClick={handlePeekWithCaptcha}
+                disabled={!captchaToken || peekLoading}
+                className="w-full font-mono shadow-[0_0_16px_rgba(0,255,255,0.2)]"
+                aria-label="Continue to access share"
+              >
+                {peekLoading ? "Verifying..." : "Continue"}
+              </Button>
+            </motion.div>
+          )}
 
           {/* Loading */}
           {phase === "loading" && (
