@@ -13,6 +13,7 @@ export * from "./deleteShareResponse";
 export * from "./detailedHealthStatus";
 export * from "./errorResponse";
 export * from "./fileMetadata";
+export * from "./getShareParams";
 export * from "./getShareResponse";
 export * from "./getShareResponseShareType";
 export * from "./healthStatus";

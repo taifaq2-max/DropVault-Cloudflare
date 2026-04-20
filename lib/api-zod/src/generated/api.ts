@@ -92,6 +92,15 @@ export const GetShareParams = zod.object({
     .max(getSharePathShareIdMax),
 });
 
+export const GetShareQueryParams = zod.object({
+  captchaToken: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "hCaptcha verification token (required when server has HCAPTCHA_SECRET_KEY set)",
+    ),
+});
+
 export const GetShareResponse = zod.object({
   encryptedData: zod.string(),
   fileMetadata: zod

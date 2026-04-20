@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRoute, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { usePeekShare, useDeleteShare } from "@workspace/api-client-react";
+import HCaptcha from "@hcaptcha/react-hcaptcha";
 import {
   importKeyFromBase64Url,
   decryptPayload,
@@ -14,6 +15,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import JSZip from "jszip";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { useTheme } from "@/components/theme-provider";
+
+const HCAPTCHA_SITE_KEY = import.meta.env.VITE_HCAPTCHA_SITE_KEY as string | undefined;
 
 type Phase =
   | "loading"
@@ -87,6 +91,7 @@ export default function ReceiverPage() {
   const [, params] = useRoute("/share/:shareId");
   const [, navigate] = useLocation();
   const shareId = params?.shareId ?? "";
+  const { theme } = useTheme();
 
   const [phase, setPhase] = useState<Phase>("loading");
   const [password, setPassword] = useState("");
@@ -98,6 +103,11 @@ export default function ReceiverPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [zipProgress, setZipProgress] = useState(0);
   const [zipping, setZipping] = useState(false);
+
+  // hCaptcha state
+  const [captchaToken, setCaptchaToken] = useState("");
+  const captchaRef = useRef<HCaptcha>(null);
+  const captchaTheme: "dark" | "light" = theme === "dark" ? "dark" : "light";
 
   // Persisted share data across phases
   const [shareData, setShareData] = useState<GetShareData | null>(null);
@@ -134,9 +144,11 @@ export default function ReceiverPage() {
     }
   };
 
-  const fetchShare = useCallback(async (): Promise<GetShareData | null> => {
+  const fetchShare = useCallback(async (token?: string): Promise<GetShareData | null> => {
     const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-    const res = await fetch(`${base}/api/shares/${shareId}`);
+    const url = new URL(`${window.location.origin}${base}/api/shares/${shareId}`);
+    if (token) url.searchParams.set("captchaToken", token);
+    const res = await fetch(url.toString());
     if (!res.ok) {
       const data = await res.json().catch(() => ({})) as { humorousMessage?: string; message?: string };
       throw { status: res.status, data };
@@ -155,8 +167,10 @@ export default function ReceiverPage() {
     setPhase("decrypting");
 
     try {
-      const data = await fetchShare();
+      const data = await fetchShare(captchaToken || undefined);
       if (!data) throw new Error("No data returned");
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken("");
       setShareData(data);
 
       if (data.passwordRequired) {
@@ -166,6 +180,8 @@ export default function ReceiverPage() {
 
       await decrypt(data.encryptedData, keyFragment, null, null);
     } catch (err: unknown) {
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken("");
       const anyErr = err as { data?: { humorousMessage?: string; message?: string } };
       setErrorMessage(
         anyErr?.data?.humorousMessage ??
@@ -385,11 +401,30 @@ export default function ReceiverPage() {
                 ))}
               </div>
 
+              {/* hCaptcha widget */}
+              {HCAPTCHA_SITE_KEY && (
+                <div className="flex justify-center" aria-label="Human verification">
+                  <HCaptcha
+                    ref={captchaRef}
+                    sitekey={HCAPTCHA_SITE_KEY}
+                    theme={captchaTheme}
+                    onVerify={(token) => setCaptchaToken(token)}
+                    onExpire={() => setCaptchaToken("")}
+                    onError={() => setCaptchaToken("")}
+                  />
+                </div>
+              )}
+
               <div className="flex gap-4">
                 <Button variant="outline" onClick={() => navigate("/")} className="flex-1 font-mono" aria-label="Go back without accessing">
                   Go Back
                 </Button>
-                <Button onClick={handleAccess} className="flex-1 font-mono shadow-[0_0_16px_rgba(0,255,255,0.2)]" aria-label="Access data">
+                <Button
+                  onClick={handleAccess}
+                  disabled={!!HCAPTCHA_SITE_KEY && !captchaToken}
+                  className="flex-1 font-mono shadow-[0_0_16px_rgba(0,255,255,0.2)]"
+                  aria-label="Access data"
+                >
                   Access Data
                 </Button>
               </div>

@@ -133,3 +133,10 @@ export interface ShareErrorResponse {
   message: string;
   humorousMessage: string;
 }
+
+export type GetShareParams = {
+  /**
+   * hCaptcha verification token (required when server has HCAPTCHA_SECRET_KEY set)
+   */
+  captchaToken?: string;
+};

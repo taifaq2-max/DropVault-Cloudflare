@@ -22,6 +22,7 @@ import type {
   DeleteShareResponse,
   DetailedHealthStatus,
   ErrorResponse,
+  GetShareParams,
   GetShareResponse,
   HealthStatus,
   PeekShareResponse,
@@ -285,29 +286,46 @@ export const useCreateShare = <
  * Fetch encrypted data for a share. Marks it as accessed immediately.
  * @summary Retrieve a share (one-time access)
  */
-export const getGetShareUrl = (shareId: string) => {
-  return `/api/shares/${shareId}`;
+export const getGetShareUrl = (shareId: string, params?: GetShareParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/shares/${shareId}?${stringifiedParams}`
+    : `/api/shares/${shareId}`;
 };
 
 export const getShare = async (
   shareId: string,
+  params?: GetShareParams,
   options?: RequestInit,
 ): Promise<GetShareResponse> => {
-  return customFetch<GetShareResponse>(getGetShareUrl(shareId), {
+  return customFetch<GetShareResponse>(getGetShareUrl(shareId, params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getGetShareQueryKey = (shareId: string) => {
-  return [`/api/shares/${shareId}`] as const;
+export const getGetShareQueryKey = (
+  shareId: string,
+  params?: GetShareParams,
+) => {
+  return [`/api/shares/${shareId}`, ...(params ? [params] : [])] as const;
 };
 
 export const getGetShareQueryOptions = <
   TData = Awaited<ReturnType<typeof getShare>>,
-  TError = ErrorType<ShareErrorResponse>,
+  TError = ErrorType<ErrorResponse | ShareErrorResponse>,
 >(
   shareId: string,
+  params?: GetShareParams,
   options?: {
     query?: UseQueryOptions<
       Awaited<ReturnType<typeof getShare>>,
@@ -319,11 +337,12 @@ export const getGetShareQueryOptions = <
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getGetShareQueryKey(shareId);
+  const queryKey =
+    queryOptions?.queryKey ?? getGetShareQueryKey(shareId, params);
 
   const queryFn: QueryFunction<Awaited<ReturnType<typeof getShare>>> = ({
     signal,
-  }) => getShare(shareId, { signal, ...requestOptions });
+  }) => getShare(shareId, params, { signal, ...requestOptions });
 
   return {
     queryKey,
@@ -338,7 +357,7 @@ export const getGetShareQueryOptions = <
 export type GetShareQueryResult = NonNullable<
   Awaited<ReturnType<typeof getShare>>
 >;
-export type GetShareQueryError = ErrorType<ShareErrorResponse>;
+export type GetShareQueryError = ErrorType<ErrorResponse | ShareErrorResponse>;
 
 /**
  * @summary Retrieve a share (one-time access)
@@ -346,9 +365,10 @@ export type GetShareQueryError = ErrorType<ShareErrorResponse>;
 
 export function useGetShare<
   TData = Awaited<ReturnType<typeof getShare>>,
-  TError = ErrorType<ShareErrorResponse>,
+  TError = ErrorType<ErrorResponse | ShareErrorResponse>,
 >(
   shareId: string,
+  params?: GetShareParams,
   options?: {
     query?: UseQueryOptions<
       Awaited<ReturnType<typeof getShare>>,
@@ -358,7 +378,7 @@ export function useGetShare<
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getGetShareQueryOptions(shareId, options);
+  const queryOptions = getGetShareQueryOptions(shareId, params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;
