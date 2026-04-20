@@ -8,6 +8,7 @@ const TEST_SESSION_SECRET = "test-session-secret";
 
 vi.mock("../services/rateLimiter.js", () => ({
   checkRateLimit: () => ({ allowed: true, retryAfterSeconds: 0 }),
+  checkPeekRateLimit: () => ({ allowed: true, retryAfterSeconds: 0 }),
 }));
 
 const originalFetch = globalThis.fetch;
@@ -118,6 +119,27 @@ describe("Nonce protection (HCAPTCHA_SECRET_KEY enabled)", () => {
       .query({ accessNonce });
     expect(accessRes.status).toBe(200);
     expect(typeof accessRes.body.encryptedData).toBe("string");
+  });
+
+  it("rejects access when nonce was issued for a different shareId (403 invalid_nonce)", async () => {
+    const shareIdA = await createShare();
+    const shareIdB = await createShare();
+    const nonceForA = makeNonce(shareIdA, "::ffff:127.0.0.1");
+    const res = await request(app)
+      .get(`/api/shares/${shareIdB}`)
+      .query({ accessNonce: nonceForA });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("invalid_nonce");
+  });
+
+  it("rejects access when nonce was issued for a different IP (403 invalid_nonce)", async () => {
+    const shareId = await createShare();
+    const nonceForOtherIp = makeNonce(shareId, "1.2.3.4");
+    const res = await request(app)
+      .get(`/api/shares/${shareId}`)
+      .query({ accessNonce: nonceForOtherIp });
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("invalid_nonce");
   });
 });
 
