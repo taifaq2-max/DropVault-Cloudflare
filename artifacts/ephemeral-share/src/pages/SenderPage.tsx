@@ -197,6 +197,8 @@ export default function SenderPage() {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [captchaToken, setCaptchaToken] = useState("");
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState<null | "uploading" | "confirming">(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captchaRef = useRef<HCaptcha>(null);
 
@@ -391,17 +393,34 @@ export default function SenderPage() {
           expiresAt: string;
         };
 
-        // 2. PUT the encrypted ciphertext directly to R2 (bypasses Worker).
-        const putRes = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: { "Content-Type": "application/octet-stream" },
-          body: encryptedData,
+        // 2. PUT the encrypted ciphertext directly to R2 via XHR (exposes upload progress).
+        setUploadPhase("uploading");
+        setUploadProgress(0);
+        await new Promise<void>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              setUploadProgress(Math.round((e.loaded / e.total) * 100));
+            }
+          };
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              setUploadProgress(100);
+              resolve();
+            } else {
+              reject(new Error(`R2 upload failed (status ${xhr.status}). Please try again.`));
+            }
+          };
+          xhr.onerror = () => reject(new Error("R2 upload failed. Please try again."));
+          xhr.onabort = () => reject(new Error("Upload was cancelled. Please try again."));
+          xhr.ontimeout = () => reject(new Error("Upload timed out. Check your connection and try again."));
+          xhr.open("PUT", uploadUrl);
+          xhr.setRequestHeader("Content-Type", "application/octet-stream");
+          xhr.send(encryptedData);
         });
-        if (!putRes.ok) {
-          throw new Error(`R2 upload failed (status ${putRes.status}). Please try again.`);
-        }
 
         // 3. Confirm the upload — Worker verifies the R2 object exists and activates the share.
+        setUploadPhase("confirming");
         const confirmRes = await fetch(`${base}/api/shares/confirm`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -434,6 +453,7 @@ export default function SenderPage() {
 
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
+      setUploadPhase(null);
 
       // When password is set: put encrypted key in URL (receiver needs password to recover raw key)
       // When no password: put raw key directly in URL
@@ -448,6 +468,7 @@ export default function SenderPage() {
     } catch (err: unknown) {
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
+      setUploadPhase(null);
       // Check for rate limit
       const anyErr = err as { response?: { data?: { retryAfterSeconds?: number; message?: string } } };
       if (anyErr?.response?.data?.retryAfterSeconds) {
@@ -878,13 +899,68 @@ export default function SenderPage() {
                 </div>
               )}
 
-              {/* Submit */}
+              {/* Upload progress bar (R2 path only) */}
+              <AnimatePresence>
+                {uploadPhase !== null && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="border border-primary/30 bg-card p-4 space-y-3"
+                  >
+                    <div className="flex items-center justify-between font-mono text-xs text-muted-foreground uppercase tracking-widest">
+                      <span>
+                        {uploadPhase === "uploading" ? "Uploading…" : "Confirming…"}
+                      </span>
+                      {uploadPhase === "uploading" && (
+                        <span className="text-primary tabular-nums">{uploadProgress}%</span>
+                      )}
+                    </div>
+                    <div className="flex gap-1 items-center">
+                      {/* Step 1: Upload bar */}
+                      <div className="flex-1 h-2 bg-muted overflow-hidden">
+                        <motion.div
+                          className="h-full bg-primary"
+                          initial={{ width: "0%" }}
+                          animate={{
+                            width: uploadPhase === "confirming" ? "100%" : `${uploadProgress}%`,
+                          }}
+                          transition={{ ease: "linear", duration: 0.15 }}
+                        />
+                      </div>
+                      <div className="w-px h-4 bg-border shrink-0" />
+                      {/* Step 2: Confirm indicator */}
+                      <div className="w-8 h-2 bg-muted overflow-hidden shrink-0">
+                        <motion.div
+                          className="h-full bg-primary"
+                          initial={{ width: "0%" }}
+                          animate={{
+                            width: uploadPhase === "confirming" ? "100%" : "0%",
+                          }}
+                          transition={{ ease: "linear", duration: 0.4 }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex font-mono text-xs text-muted-foreground gap-1">
+                      <span className={uploadPhase === "uploading" ? "text-primary" : "text-foreground"}>
+                        1. Upload
+                      </span>
+                      <span className="mx-1">·</span>
+                      <span className={uploadPhase === "confirming" ? "text-primary" : ""}>
+                        2. Confirm
+                      </span>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <motion.div whileTap={{ scale: 0.99 }}>
                 <Button
                   type="button"
                   onClick={handleCreateShare}
                   disabled={
                     createShare.isPending ||
+                    uploadPhase !== null ||
                     rateLimitSeconds > 0 ||
                     (mode === "text" && !text.trim()) ||
                     (mode === "files" && files.length === 0) ||
@@ -893,7 +969,7 @@ export default function SenderPage() {
                   className="w-full font-mono tracking-widest text-sm py-6"
                   aria-label="Create secure share"
                 >
-                  {createShare.isPending ? (
+                  {createShare.isPending || uploadPhase !== null ? (
                     <span className="flex items-center gap-2">
                       <motion.span
                         animate={{ rotate: 360 }}
@@ -902,7 +978,11 @@ export default function SenderPage() {
                       >
                         ⟳
                       </motion.span>
-                      ENCRYPTING...
+                      {uploadPhase === "uploading"
+                        ? `UPLOADING… ${uploadProgress}%`
+                        : uploadPhase === "confirming"
+                        ? "CONFIRMING…"
+                        : "ENCRYPTING…"}
                     </span>
                   ) : (
                     "CREATE SECURE SHARE"
