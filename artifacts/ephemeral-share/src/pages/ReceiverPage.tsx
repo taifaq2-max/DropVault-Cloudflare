@@ -158,6 +158,10 @@ export default function ReceiverPage() {
           setPhase("share_expired");
           return;
         }
+        if (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed") {
+          setPhase("share_consumed");
+          return;
+        }
         setErrorMessage(
           anyErr?.data?.humorousMessage ??
             anyErr?.data?.message ??
@@ -188,6 +192,8 @@ export default function ReceiverPage() {
         setCaptchaGateError("Verification failed. Please complete the captcha again.");
       } else if (anyErr?.status === 404 && anyErr?.data?.error === "not_found") {
         setPhase("share_expired");
+      } else if (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed") {
+        setPhase("share_consumed");
       } else {
         setErrorMessage(
           anyErr?.data?.humorousMessage ??
