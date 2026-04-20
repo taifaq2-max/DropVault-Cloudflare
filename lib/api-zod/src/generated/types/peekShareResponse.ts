@@ -13,4 +13,9 @@ export interface PeekShareResponse {
   shareType: PeekShareResponseShareType;
   fileCount: number;
   expiresAt: string;
+  /** HMAC-SHA256 nonce to be passed as ?accessNonce= when calling GET
+/shares/{shareId}. Only present when HCAPTCHA_SECRET_KEY is set
+on the server. Valid for 5 minutes.
+ */
+  accessNonce?: string;
 }

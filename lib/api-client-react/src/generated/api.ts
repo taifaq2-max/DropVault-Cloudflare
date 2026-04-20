@@ -25,6 +25,7 @@ import type {
   GetShareParams,
   GetShareResponse,
   HealthStatus,
+  PeekShareParams,
   PeekShareResponse,
   RateLimitErrorResponse,
   ShareErrorResponse,
@@ -476,29 +477,46 @@ export const useDeleteShare = <
  * Returns size and whether password is required — does NOT mark as accessed
  * @summary Peek at share metadata without consuming it
  */
-export const getPeekShareUrl = (shareId: string) => {
-  return `/api/shares/${shareId}/peek`;
+export const getPeekShareUrl = (shareId: string, params?: PeekShareParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/shares/${shareId}/peek?${stringifiedParams}`
+    : `/api/shares/${shareId}/peek`;
 };
 
 export const peekShare = async (
   shareId: string,
+  params?: PeekShareParams,
   options?: RequestInit,
 ): Promise<PeekShareResponse> => {
-  return customFetch<PeekShareResponse>(getPeekShareUrl(shareId), {
+  return customFetch<PeekShareResponse>(getPeekShareUrl(shareId, params), {
     ...options,
     method: "GET",
   });
 };
 
-export const getPeekShareQueryKey = (shareId: string) => {
-  return [`/api/shares/${shareId}/peek`] as const;
+export const getPeekShareQueryKey = (
+  shareId: string,
+  params?: PeekShareParams,
+) => {
+  return [`/api/shares/${shareId}/peek`, ...(params ? [params] : [])] as const;
 };
 
 export const getPeekShareQueryOptions = <
   TData = Awaited<ReturnType<typeof peekShare>>,
-  TError = ErrorType<ShareErrorResponse>,
+  TError = ErrorType<ErrorResponse | ShareErrorResponse>,
 >(
   shareId: string,
+  params?: PeekShareParams,
   options?: {
     query?: UseQueryOptions<
       Awaited<ReturnType<typeof peekShare>>,
@@ -510,11 +528,12 @@ export const getPeekShareQueryOptions = <
 ) => {
   const { query: queryOptions, request: requestOptions } = options ?? {};
 
-  const queryKey = queryOptions?.queryKey ?? getPeekShareQueryKey(shareId);
+  const queryKey =
+    queryOptions?.queryKey ?? getPeekShareQueryKey(shareId, params);
 
   const queryFn: QueryFunction<Awaited<ReturnType<typeof peekShare>>> = ({
     signal,
-  }) => peekShare(shareId, { signal, ...requestOptions });
+  }) => peekShare(shareId, params, { signal, ...requestOptions });
 
   return {
     queryKey,
@@ -529,7 +548,7 @@ export const getPeekShareQueryOptions = <
 export type PeekShareQueryResult = NonNullable<
   Awaited<ReturnType<typeof peekShare>>
 >;
-export type PeekShareQueryError = ErrorType<ShareErrorResponse>;
+export type PeekShareQueryError = ErrorType<ErrorResponse | ShareErrorResponse>;
 
 /**
  * @summary Peek at share metadata without consuming it
@@ -537,9 +556,10 @@ export type PeekShareQueryError = ErrorType<ShareErrorResponse>;
 
 export function usePeekShare<
   TData = Awaited<ReturnType<typeof peekShare>>,
-  TError = ErrorType<ShareErrorResponse>,
+  TError = ErrorType<ErrorResponse | ShareErrorResponse>,
 >(
   shareId: string,
+  params?: PeekShareParams,
   options?: {
     query?: UseQueryOptions<
       Awaited<ReturnType<typeof peekShare>>,
@@ -549,7 +569,7 @@ export function usePeekShare<
     request?: SecondParameter<typeof customFetch>;
   },
 ): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
-  const queryOptions = getPeekShareQueryOptions(shareId, options);
+  const queryOptions = getPeekShareQueryOptions(shareId, params, options);
 
   const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
     queryKey: QueryKey;

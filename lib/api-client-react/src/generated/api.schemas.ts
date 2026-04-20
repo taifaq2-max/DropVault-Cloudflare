@@ -100,6 +100,11 @@ export interface PeekShareResponse {
   shareType: PeekShareResponseShareType;
   fileCount: number;
   expiresAt: string;
+  /** HMAC-SHA256 nonce to be passed as ?accessNonce= when calling GET
+/shares/{shareId}. Only present when HCAPTCHA_SECRET_KEY is set
+on the server. Valid for 5 minutes.
+ */
+  accessNonce?: string;
 }
 
 export interface DeleteShareResponse {
@@ -136,7 +141,16 @@ export interface ShareErrorResponse {
 
 export type GetShareParams = {
   /**
-   * hCaptcha verification token (required when server has HCAPTCHA_SECRET_KEY set)
+ * HMAC-SHA256 nonce issued by the peek endpoint. Required when the
+server has HCAPTCHA_SECRET_KEY configured. Format: base64url(sig).timestamp
+
+ */
+  accessNonce?: string;
+};
+
+export type PeekShareParams = {
+  /**
+   * hCaptcha response token (required when server has HCAPTCHA_SECRET_KEY configured)
    */
   captchaToken?: string;
 };

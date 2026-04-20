@@ -8,7 +8,9 @@
 
 export type GetShareParams = {
   /**
-   * hCaptcha verification token (required when server has HCAPTCHA_SECRET_KEY set)
-   */
-  captchaToken?: string;
+ * HMAC-SHA256 nonce issued by the peek endpoint. Required when the
+server has HCAPTCHA_SECRET_KEY configured. Format: base64url(sig).timestamp
+
+ */
+  accessNonce?: string;
 };

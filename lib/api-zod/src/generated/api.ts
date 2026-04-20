@@ -93,11 +93,11 @@ export const GetShareParams = zod.object({
 });
 
 export const GetShareQueryParams = zod.object({
-  captchaToken: zod.coerce
+  accessNonce: zod.coerce
     .string()
     .optional()
     .describe(
-      "hCaptcha verification token (required when server has HCAPTCHA_SECRET_KEY set)",
+      "HMAC-SHA256 nonce issued by the peek endpoint. Required when the\nserver has HCAPTCHA_SECRET_KEY configured. Format: base64url(sig).timestamp\n",
     ),
 });
 
@@ -154,12 +154,27 @@ export const PeekShareParams = zod.object({
     .max(peekSharePathShareIdMax),
 });
 
+export const PeekShareQueryParams = zod.object({
+  captchaToken: zod.coerce
+    .string()
+    .optional()
+    .describe(
+      "hCaptcha response token (required when server has HCAPTCHA_SECRET_KEY configured)",
+    ),
+});
+
 export const PeekShareResponse = zod.object({
   totalSize: zod.number(),
   passwordRequired: zod.boolean(),
   shareType: zod.enum(["text", "files", "mixed"]),
   fileCount: zod.number(),
   expiresAt: zod.string(),
+  accessNonce: zod
+    .string()
+    .optional()
+    .describe(
+      "HMAC-SHA256 nonce to be passed as ?accessNonce= when calling GET\n\/shares\/{shareId}. Only present when HCAPTCHA_SECRET_KEY is set\non the server. Valid for 5 minutes.\n",
+    ),
 });
 
 /**

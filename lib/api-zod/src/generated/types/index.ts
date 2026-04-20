@@ -17,6 +17,7 @@ export * from "./getShareParams";
 export * from "./getShareResponse";
 export * from "./getShareResponseShareType";
 export * from "./healthStatus";
+export * from "./peekShareParams";
 export * from "./peekShareResponse";
 export * from "./peekShareResponseShareType";
 export * from "./rateLimitErrorResponse";
