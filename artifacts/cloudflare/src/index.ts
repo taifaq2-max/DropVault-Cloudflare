@@ -39,8 +39,9 @@ export { ShareAccessGate, NonceStore, RateLimiter };
 // ── Constants ────────────────────────────────────────────────────────────────
 const HCAPTCHA_VERIFY_URL = "https://api.hcaptcha.com/siteverify";
 const RATE_LIMIT_WINDOW_MS = 60_000;
-const RATE_LIMIT_MAX_CREATES = 10;
-const RATE_LIMIT_MAX_PEEKS = 30;
+// Match Express dev-server defaults: 3 creates/min, 10 peeks/min.
+const RATE_LIMIT_MAX_CREATES = 3;
+const RATE_LIMIT_MAX_PEEKS = 10;
 const MAX_INLINE_BYTES = 4 * 1024 * 1024;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

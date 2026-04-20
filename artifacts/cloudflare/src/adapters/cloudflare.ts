@@ -216,9 +216,19 @@ export class CloudflareAdapter implements StorageAdapter {
     const pending = JSON.parse(raw) as PendingUpload;
     await this.env.SHARE_KV.delete(this.pendingKey(shareId));
 
-    // Verify the R2 object actually exists (confirms the upload succeeded).
+    // Verify the R2 object actually exists and its size is within the allowed maximum.
+    // A malicious client could send `totalSize: 1` in the request but upload GBs to R2;
+    // obj.size is the ground truth for what was actually stored.
     const obj = await this.env.SHARE_R2.head(pending.r2Key);
     if (!obj) return null;
+
+    const MAX_BYTES = 420 * 1024 * 1024;
+    if (obj.size > MAX_BYTES) {
+      // Delete the oversized object to prevent it from being activated and to
+      // reclaim R2 storage immediately.
+      await this.env.SHARE_R2.delete(pending.r2Key).catch(() => {});
+      return null;
+    }
 
     return this.createShare({
       r2Key: pending.r2Key,

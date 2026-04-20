@@ -8,7 +8,7 @@
 
 [build]
 command = "pnpm --filter @workspace/ephemeral-share run build"
-destination = "artifacts/ephemeral-share/dist"
+destination = "artifacts/ephemeral-share/dist/public"
 
 [build.environment_variables]
 # Set these in the Cloudflare Pages dashboard → Settings → Environment variables
