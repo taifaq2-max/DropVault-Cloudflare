@@ -27,6 +27,7 @@ type Phase =
   | "decrypting"
   | "content"
   | "done"
+  | "nonce_expired"
   | "error";
 
 interface FileDownloadState {
@@ -229,7 +230,11 @@ export default function ReceiverPage() {
 
       await decrypt(data.encryptedData, keyFragment, null, null);
     } catch (err: unknown) {
-      const anyErr = err as { data?: { humorousMessage?: string; message?: string } };
+      const anyErr = err as { status?: number; data?: { error?: string; humorousMessage?: string; message?: string } };
+      if (anyErr?.status === 403 && anyErr?.data?.error === "invalid_nonce") {
+        setPhase("nonce_expired");
+        return;
+      }
       setErrorMessage(
         anyErr?.data?.humorousMessage ??
           anyErr?.data?.message ??
@@ -237,6 +242,16 @@ export default function ReceiverPage() {
       );
       setPhase("error");
     }
+  };
+
+  /** Reset all peek/nonce state and restart the flow from the beginning. */
+  const handleRetry = () => {
+    setAccessNonce("");
+    setPeekData(null);
+    setCaptchaToken("");
+    setCaptchaGateError("");
+    captchaRef.current?.resetCaptcha();
+    setPhase(HCAPTCHA_SITE_KEY ? "captcha" : "loading");
   };
 
   const decrypt = async (
@@ -615,6 +630,28 @@ export default function ReceiverPage() {
               </div>
               <Button variant="outline" onClick={() => navigate("/")} className="font-mono" aria-label="Create a new share">
                 Create a Share
+              </Button>
+            </motion.div>
+          )}
+
+          {/* Nonce expired — session timed out before clicking Access Data */}
+          {phase === "nonce_expired" && (
+            <motion.div key="nonce_expired" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center space-y-6 py-8">
+              <div className="text-6xl" role="img" aria-label="Dog mascot">🐕</div>
+              <div className="space-y-3">
+                <div className="font-mono font-bold text-xl">Your session expired</div>
+                <p className="text-muted-foreground font-mono text-sm max-w-sm mx-auto">
+                  You took a little longer than 5 minutes on the warning screen.
+                  The access session expired — but the share is still here.
+                  Click below to start over.
+                </p>
+              </div>
+              <Button
+                onClick={handleRetry}
+                className="font-mono shadow-[0_0_16px_rgba(0,255,255,0.2)]"
+                aria-label="Try again to access this share"
+              >
+                Try Again
               </Button>
             </motion.div>
           )}
