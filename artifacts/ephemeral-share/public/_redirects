@@ -1,0 +1,5 @@
+# Cloudflare Pages SPA redirect
+# All non-file requests fall through to index.html so React Router handles routing.
+# The decryption key lives in the URL fragment (#key=...) which is never sent
+# to the server, keeping it zero-knowledge.
+/*    /index.html    200

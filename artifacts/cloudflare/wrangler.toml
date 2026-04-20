@@ -1,0 +1,93 @@
+name = "vaultdrop-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# ---------------------------------------------------------------------------
+# Variables — non-secret configuration
+# ---------------------------------------------------------------------------
+[vars]
+# FRONTEND_URL is required for CORS. Set to your Pages domain or custom domain.
+# Example: FRONTEND_URL = "https://vaultdrop.example.com"
+FRONTEND_URL = ""
+
+# Optional: Cloudflare Account ID for R2 presigned URL generation.
+# Find yours at: https://dash.cloudflare.com → right sidebar.
+# Required for the large-file (>4 MB) R2 direct-upload flow.
+CLOUDFLARE_ACCOUNT_ID = ""
+
+# R2 bucket name (must match the [[r2_buckets]] bucket_name below).
+R2_BUCKET_NAME = "vaultdrop-shares"
+
+# ---------------------------------------------------------------------------
+# Secrets — set via: wrangler secret put SECRET_NAME
+# ---------------------------------------------------------------------------
+# SESSION_SECRET      — random 64-char string, required when HCAPTCHA_SECRET_KEY is set
+# HCAPTCHA_SECRET_KEY — hCaptcha site verification secret (optional)
+# R2_ACCESS_KEY_ID    — R2 API token "Access Key ID" for presigned URL signing
+# R2_ACCESS_KEY_SECRET— R2 API token "Secret Access Key" for presigned URL signing
+
+# ---------------------------------------------------------------------------
+# KV namespace — share metadata storage
+# ---------------------------------------------------------------------------
+[[kv_namespaces]]
+binding = "SHARE_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_YOUR_KV_NAMESPACE_PREVIEW_ID"
+
+# ---------------------------------------------------------------------------
+# R2 bucket — encrypted blob storage (direct-upload, not through Worker)
+# ---------------------------------------------------------------------------
+[[r2_buckets]]
+binding = "SHARE_R2"
+bucket_name = "vaultdrop-shares"
+
+# ---------------------------------------------------------------------------
+# Durable Objects
+# ---------------------------------------------------------------------------
+[[durable_objects.bindings]]
+name = "SHARE_ACCESS_GATE"
+class_name = "ShareAccessGate"
+
+[[durable_objects.bindings]]
+name = "NONCE_STORE"
+class_name = "NonceStore"
+
+[[durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["ShareAccessGate", "NonceStore", "RateLimiter"]
+
+# ---------------------------------------------------------------------------
+# Staging environment (optional)
+# ---------------------------------------------------------------------------
+[env.staging]
+name = "vaultdrop-api-staging"
+
+[env.staging.vars]
+FRONTEND_URL = ""
+CLOUDFLARE_ACCOUNT_ID = ""
+R2_BUCKET_NAME = "vaultdrop-shares-staging"
+
+[[env.staging.kv_namespaces]]
+binding = "SHARE_KV"
+id = "REPLACE_WITH_STAGING_KV_ID"
+
+[[env.staging.r2_buckets]]
+binding = "SHARE_R2"
+bucket_name = "vaultdrop-shares-staging"
+
+[[env.staging.durable_objects.bindings]]
+name = "SHARE_ACCESS_GATE"
+class_name = "ShareAccessGate"
+
+[[env.staging.durable_objects.bindings]]
+name = "NONCE_STORE"
+class_name = "NonceStore"
+
+[[env.staging.durable_objects.bindings]]
+name = "RATE_LIMITER"
+class_name = "RateLimiter"

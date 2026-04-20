@@ -1,0 +1,21 @@
+{
+  "name": "@workspace/cloudflare",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev:worker": "wrangler dev"
+  },
+  "dependencies": {
+    "@workspace/api-zod": "workspace:*",
+    "hono": "^4.7.11"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250620.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.19.0"
+  }
+}

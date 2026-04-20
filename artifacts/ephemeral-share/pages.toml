@@ -1,0 +1,17 @@
+# Cloudflare Pages project configuration for the VaultDrop frontend.
+#
+# This file is informational — Cloudflare Pages is configured via the
+# dashboard or `wrangler pages deploy`. The actual build settings are set
+# in the dashboard (Build command, Output directory).
+#
+# See CLOUDFLARE_DEPLOY.md for full instructions.
+
+[build]
+command = "pnpm --filter @workspace/ephemeral-share run build"
+destination = "artifacts/ephemeral-share/dist"
+
+[build.environment_variables]
+# Set these in the Cloudflare Pages dashboard → Settings → Environment variables
+# VITE_API_URL        = "https://vaultdrop-api.<your-account>.workers.dev"
+# VITE_HCAPTCHA_SITE_KEY = ""   # optional
+# VITE_USE_R2_UPLOADS = "true"  # enable R2 direct-upload flow for large files

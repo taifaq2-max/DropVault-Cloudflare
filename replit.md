@@ -66,11 +66,25 @@ A zero-knowledge, one-time file and text sharing platform. Encrypted client-side
 - Password flow: encrypted key (not raw key) goes in URL when password is enabled
 - TypeScript strict Uint8Array compatibility with Web Crypto API
 
+## Cloudflare Deployment (artifacts/cloudflare)
+
+A Hono-based Cloudflare Worker that mirrors the Express API surface and adds:
+- **KV** namespace for share metadata (TTL-managed)
+- **R2** bucket for encrypted blobs (direct-upload via presigned S3-compatible PUT URLs — bypasses Worker)
+- **Durable Objects**: `ShareAccessGate` (at-most-once access), `NonceStore` (HMAC nonce revocation), `RateLimiter` (sliding-window)
+- New endpoints: `POST /api/shares/upload-url` and `POST /api/shares/confirm` for 420 MB direct-upload flow
+- `StorageAdapter` interface with `MemoryAdapter` (local dev) and `CloudflareAdapter` (production)
+- `artifacts/ephemeral-share/public/_headers` and `_redirects` for Cloudflare Pages
+- Deployment guide: `CLOUDFLARE_DEPLOY.md`
+
+Frontend: `VITE_USE_R2_UPLOADS=true` enables the 420 MB R2 upload path (default: 4 MB inline path for dev).
+
 ## Key Commands
 
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
 - `pnpm --filter @workspace/api-server run dev` — run API server locally
+- `cd artifacts/cloudflare && pnpm exec wrangler deploy` — deploy Worker to Cloudflare
 
 See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.

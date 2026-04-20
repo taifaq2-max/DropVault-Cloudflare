@@ -25,7 +25,16 @@ import { Switch } from "@/components/ui/switch";
 
 const HCAPTCHA_SITE_KEY = import.meta.env.VITE_HCAPTCHA_SITE_KEY as string | undefined;
 
-const MAX_TOTAL_BYTES = 2.5 * 1024 * 1024;
+/**
+ * When VITE_USE_R2_UPLOADS=true (set in Cloudflare Pages dashboard), the
+ * sender uses the presigned R2 direct-upload path for all shares, enabling
+ * files up to 420 MB. Falls back to the inline KV path otherwise.
+ */
+const USE_R2_UPLOADS = import.meta.env.VITE_USE_R2_UPLOADS === "true";
+
+const MAX_TOTAL_BYTES = USE_R2_UPLOADS
+  ? 420 * 1024 * 1024   // 420 MB — R2 direct-upload path
+  : 4 * 1024 * 1024;    // 4 MB  — inline KV path (dev / legacy)
 const MAX_FILES = 10;
 
 interface FileItem {
@@ -229,7 +238,7 @@ export default function SenderPage() {
         files.reduce((a, f) => a + f.file.size, 0) +
         fileArray.reduce((a, f) => a + f.size, 0);
       if (newTotal > MAX_TOTAL_BYTES) {
-        setError("Total payload exceeds 2.5 MB limit.");
+        setError(`Total payload exceeds ${formatBytes(MAX_TOTAL_BYTES)} limit.`);
         return;
       }
       setError("");
@@ -305,7 +314,7 @@ export default function SenderPage() {
       return;
     }
     if (totalSize > MAX_TOTAL_BYTES) {
-      setError("Total payload exceeds 2.5 MB limit.");
+      setError(`Total payload exceeds ${formatBytes(MAX_TOTAL_BYTES)} limit.`);
       return;
     }
 
@@ -343,28 +352,85 @@ export default function SenderPage() {
       }
 
       const shareType = mode === "text" ? "text" : "files";
+      const fileMeta = mode === "files"
+        ? files.map((fi, i) => ({ name: fi.name, size: fi.file.size, type: fi.file.type, originalIndex: i }))
+        : null;
 
-      const result = await createShare.mutateAsync({
-        data: {
-          encryptedData,
-          ttl,
-          passwordHash,
-          passwordSalt,
-          webhookUrl: webhookUrl || null,
-          webhookMessage: webhookMessage || null,
-          fileMetadata: mode === "files"
-            ? files.map((fi, i) => ({
-                name: fi.name,
-                size: fi.file.size,
-                type: fi.file.type,
-                originalIndex: i,
-              }))
-            : null,
-          shareType,
-          totalSize,
-          captchaToken: captchaToken,
-        },
-      });
+      let result: { shareId: string; expiresAt: string };
+
+      if (USE_R2_UPLOADS) {
+        // ── R2 direct-upload path ──────────────────────────────────────────
+        // 1. Request a presigned PUT URL from the Worker.
+        const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+        const uploadUrlRes = await fetch(`${base}/api/shares/upload-url`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ttl,
+            shareType,
+            totalSize,
+            passwordHash,
+            passwordSalt,
+            webhookUrl: webhookUrl || null,
+            webhookMessage: webhookMessage || null,
+            fileMetadata: fileMeta,
+            captchaToken: captchaToken || undefined,
+          }),
+        });
+
+        if (!uploadUrlRes.ok) {
+          const errData = (await uploadUrlRes.json()) as { message?: string };
+          throw Object.assign(new Error(errData.message ?? "Upload URL request failed."), {
+            response: { data: errData },
+          });
+        }
+
+        const { shareId: pendingId, uploadUrl } = (await uploadUrlRes.json()) as {
+          shareId: string;
+          uploadUrl: string;
+          expiresAt: string;
+        };
+
+        // 2. PUT the encrypted ciphertext directly to R2 (bypasses Worker).
+        const putRes = await fetch(uploadUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: encryptedData,
+        });
+        if (!putRes.ok) {
+          throw new Error(`R2 upload failed (status ${putRes.status}). Please try again.`);
+        }
+
+        // 3. Confirm the upload — Worker verifies the R2 object exists and activates the share.
+        const confirmRes = await fetch(`${base}/api/shares/confirm`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shareId: pendingId }),
+        });
+        if (!confirmRes.ok) {
+          const errData = (await confirmRes.json()) as { message?: string };
+          throw Object.assign(new Error(errData.message ?? "Upload confirmation failed."), {
+            response: { data: errData },
+          });
+        }
+        result = (await confirmRes.json()) as { shareId: string; expiresAt: string };
+      } else {
+        // ── Inline KV path (dev / legacy) ─────────────────────────────────
+        result = await createShare.mutateAsync({
+          data: {
+            encryptedData,
+            ttl,
+            passwordHash,
+            passwordSalt,
+            webhookUrl: webhookUrl || null,
+            webhookMessage: webhookMessage || null,
+            fileMetadata: fileMeta,
+            shareType,
+            totalSize,
+            captchaToken: captchaToken,
+          },
+        });
+      }
 
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
