@@ -41,7 +41,16 @@ interface FileDownloadState {
 }
 
 interface GetShareData {
-  encryptedData: string;
+  /**
+   * Base64-encoded ciphertext — present for inline KV shares (≤ 2.5 MB).
+   * Null/missing for R2-backed shares; use `dataUrl` instead.
+   */
+  encryptedData?: string | null;
+  /**
+   * Presigned R2 GET URL — present for large R2-backed shares (> 2.5 MB).
+   * The browser fetches the ciphertext text directly from this URL.
+   */
+  dataUrl?: string | null;
   fileMetadata?: Array<{ name: string; size: number; type: string; originalIndex: number }> | null;
   passwordRequired: boolean;
   passwordSalt?: string | null;
@@ -235,7 +244,7 @@ export default function ReceiverPage() {
         return;
       }
 
-      await decrypt(data.encryptedData, keyFragment, null, null);
+      await decrypt(data, keyFragment, null, null);
     } catch (err: unknown) {
       const anyErr = err as { status?: number; data?: { error?: string; humorousMessage?: string; message?: string } };
       if (anyErr?.status === 403 && anyErr?.data?.error === "invalid_nonce") {
@@ -268,14 +277,34 @@ export default function ReceiverPage() {
     setPhase(HCAPTCHA_SITE_KEY ? "captcha" : "loading");
   };
 
+  /**
+   * Resolve ciphertext from either the inline field or a presigned R2 URL.
+   * R2 objects contain the raw base64 ciphertext string written by the sender.
+   */
+  const resolveCiphertext = async (data: GetShareData): Promise<string> => {
+    if (data.encryptedData) return data.encryptedData;
+    if (data.dataUrl) {
+      const r2Res = await fetch(data.dataUrl);
+      if (!r2Res.ok) throw new Error(`Failed to fetch encrypted data from storage (${r2Res.status}).`);
+      return r2Res.text();
+    }
+    throw new Error("No encrypted data available in share response.");
+  };
+
   const decrypt = async (
-    encryptedData: string,
+    shareOrData: GetShareData | string,
     keyFragment: string,
     pwd: string | null,
     salt: string | null
   ) => {
     setPhase("decrypting");
     try {
+      // Accept either a GetShareData object (new path) or a raw ciphertext string (legacy).
+      const encryptedData: string =
+        typeof shareOrData === "string"
+          ? shareOrData
+          : await resolveCiphertext(shareOrData);
+
       let key: CryptoKey;
 
       if (pwd && salt) {
@@ -330,7 +359,7 @@ export default function ReceiverPage() {
       return;
     }
     await decrypt(
-      shareData.encryptedData,
+      shareData,
       keyFragment,
       password,
       shareData.passwordSalt ?? null

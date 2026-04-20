@@ -98,25 +98,28 @@ export class CloudflareAdapter implements StorageAdapter {
       return { found: false };
     }
 
-    if (meta.accessed) return { found: true, accessed: true };
+    if (!meta.accessed) {
+      // Consult access gate DO for authoritative state (DO is the source of truth
+      // for first-access atomicity; KV may lag after a Worker restart).
+      const resp = await this.accessGateStub(shareId).fetch(new Request("https://do/check"));
+      const { accessed: doAccessed, accessedAt } = (await resp.json()) as {
+        accessed: boolean;
+        accessedAt: string | null;
+      };
 
-    // Consult access gate DO for authoritative state.
-    const resp = await this.accessGateStub(shareId).fetch(new Request("https://do/check"));
-    const { accessed, accessedAt } = (await resp.json()) as {
-      accessed: boolean;
-      accessedAt: string | null;
-    };
-
-    if (accessed) {
-      meta.accessed = true;
-      meta.accessedAt = accessedAt;
-      await this.env.SHARE_KV.put(this.shareKey(shareId), JSON.stringify(meta), {
-        expirationTtl: 60,
-      });
-      return { found: true, accessed: true };
+      if (doAccessed) {
+        meta.accessed = true;
+        meta.accessedAt = accessedAt;
+        // Write back so future reads skip the DO call.
+        await this.env.SHARE_KV.put(this.shareKey(shareId), JSON.stringify(meta), {
+          expirationTtl: 60,
+        });
+      }
     }
 
-    return { found: true, accessed: false, share: meta };
+    // Always return the full share metadata so DELETE handlers can access
+    // webhookUrl/webhookMessage regardless of access state.
+    return { found: true, accessed: meta.accessed, share: meta };
   }
 
   async accessShare(shareId: string): Promise<AccessShareResult> {
@@ -237,7 +240,14 @@ export class CloudflareAdapter implements StorageAdapter {
   // sig = HMAC-SHA256(SESSION_SECRET, "shareId:ip:ts"), nonce = `sig.ts`
 
   private async hmacNonce(shareId: string, ip: string, ts: string): Promise<string> {
-    const secret = this.env.SESSION_SECRET ?? "dev-nonce-secret";
+    const secret = this.env.SESSION_SECRET;
+    if (!secret) {
+      // Parity with Express: SESSION_SECRET is required when hCaptcha is enabled.
+      // Never fall back to a predictable value — that would allow HMAC forgery.
+      throw new Error(
+        "SESSION_SECRET environment variable is required when HCAPTCHA_SECRET_KEY is set."
+      );
+    }
     const payload = `${shareId}:${ip}:${ts}`;
     const key = await crypto.subtle.importKey(
       "raw",
@@ -266,8 +276,15 @@ export class CloudflareAdapter implements StorageAdapter {
     const tsNum = parseInt(ts, 10);
     if (isNaN(tsNum) || Date.now() - tsNum > NONCE_TTL_MS) return false;
 
-    // 2. Recompute expected nonce and compare in constant time
-    const expected = await this.hmacNonce(shareId, ip, ts);
+    // 2. Recompute expected nonce and compare in constant time.
+    // If SESSION_SECRET is missing (misconfiguration), hmacNonce throws — treat
+    // that as validation failure (deny access) rather than propagating a 500.
+    let expected: string;
+    try {
+      expected = await this.hmacNonce(shareId, ip, ts);
+    } catch {
+      return false;
+    }
     if (expected.length !== nonce.length) return false;
 
     // Constant-time comparison (Workers WebCrypto doesn't expose timingSafeEqual)

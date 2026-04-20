@@ -80,8 +80,9 @@ export class MemoryAdapter implements StorageAdapter {
   async getShare(shareId: string): Promise<GetShareResult> {
     const share = this.shares.get(shareId);
     if (!share) return { found: false };
-    if (share.accessed) return { found: true, accessed: true };
-    return { found: true, accessed: false, share };
+    // Always include full share metadata so DELETE handlers can access webhookUrl
+    // regardless of whether the share has been accessed (mirrors CloudflareAdapter).
+    return { found: true, accessed: share.accessed, share };
   }
 
   async accessShare(shareId: string): Promise<AccessShareResult> {

@@ -57,10 +57,14 @@ export interface CreateShareParams {
   expiresAt: string;
 }
 
+/**
+ * Always includes `share` when `found: true` so that DELETE handlers can
+ * read webhookUrl/webhookMessage to fire the "download complete" webhook
+ * even after the share has already been marked accessed.
+ */
 export type GetShareResult =
   | { found: false }
-  | { found: true; accessed: true }
-  | { found: true; accessed: false; share: ShareMeta };
+  | { found: true; accessed: boolean; share: ShareMeta };
 
 export type AccessShareResult =
   | { ok: true; share: ShareMeta }

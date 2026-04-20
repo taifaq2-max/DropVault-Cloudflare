@@ -222,6 +222,9 @@ export async function handlePeekShare(
       extra: { humorousMessage: randomHumorous() },
     };
   }
+
+  const { share } = result;
+
   if (result.accessed) {
     return {
       ok: false,
@@ -231,8 +234,6 @@ export async function handlePeekShare(
       extra: { humorousMessage: "There is no cake" },
     };
   }
-
-  const { share } = result;
 
   if (Date.now() > new Date(share.expiresAt).getTime()) {
     await adapter.deleteShare(shareId);
@@ -369,8 +370,10 @@ export async function handleDeleteShare(
     return { ok: false, status: 404, error: "not_found", message: "Share not found." };
   }
 
-  // Fire webhook before deleting so we still have the metadata.
-  if (!result.accessed && result.share.webhookUrl) {
+  // Webhook fires on DELETE as the "download complete" signal, matching Express
+  // server behavior. GetShareResult always includes the full share metadata
+  // (even when accessed=true), so we can reliably read webhookUrl here.
+  if (result.share.webhookUrl) {
     await fireWebhook(result.share.webhookUrl, result.share.webhookMessage).catch(() => {});
   }
 
