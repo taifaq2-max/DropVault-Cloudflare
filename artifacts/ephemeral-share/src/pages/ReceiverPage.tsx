@@ -102,6 +102,7 @@ export default function ReceiverPage() {
   const [textCopied, setTextCopied] = useState(false);
   const [humor] = useState(pickHumor);
   const [errorMessage, setErrorMessage] = useState("");
+  const [captchaErrorMessage, setCaptchaErrorMessage] = useState("");
   const [zipProgress, setZipProgress] = useState(0);
   const [zipping, setZipping] = useState(false);
 
@@ -223,13 +224,18 @@ export default function ReceiverPage() {
     } catch (err: unknown) {
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
-      const anyErr = err as { data?: { humorousMessage?: string; message?: string } };
-      setErrorMessage(
-        anyErr?.data?.humorousMessage ??
-          anyErr?.data?.message ??
-          "Failed to retrieve share."
-      );
-      setPhase("error");
+      const anyErr = err as { data?: { error?: string; humorousMessage?: string; message?: string } };
+      if (anyErr?.data?.error === "captcha_failed") {
+        setCaptchaErrorMessage("Human verification failed. Please complete the captcha and try again.");
+        setPhase("warning");
+      } else {
+        setErrorMessage(
+          anyErr?.data?.humorousMessage ??
+            anyErr?.data?.message ??
+            "Failed to retrieve share."
+        );
+        setPhase("error");
+      }
     }
   };
 
@@ -471,15 +477,22 @@ export default function ReceiverPage() {
 
               {/* hCaptcha widget */}
               {HCAPTCHA_SITE_KEY && (
-                <div className="flex justify-center" aria-label="Human verification">
-                  <HCaptcha
-                    ref={captchaRef}
-                    sitekey={HCAPTCHA_SITE_KEY}
-                    theme={captchaTheme}
-                    onVerify={(token) => setCaptchaToken(token)}
-                    onExpire={() => setCaptchaToken("")}
-                    onError={() => setCaptchaToken("")}
-                  />
+                <div className="space-y-3">
+                  <div className="flex justify-center" aria-label="Human verification">
+                    <HCaptcha
+                      ref={captchaRef}
+                      sitekey={HCAPTCHA_SITE_KEY}
+                      theme={captchaTheme}
+                      onVerify={(token) => { setCaptchaToken(token); setCaptchaErrorMessage(""); }}
+                      onExpire={() => setCaptchaToken("")}
+                      onError={() => setCaptchaToken("")}
+                    />
+                  </div>
+                  {captchaErrorMessage && (
+                    <div className="text-sm font-mono text-destructive text-center" role="alert">
+                      {captchaErrorMessage}
+                    </div>
+                  )}
                 </div>
               )}
 
