@@ -203,7 +203,8 @@ export default function SenderPage() {
   const [renameValue, setRenameValue] = useState("");
   const [captchaToken, setCaptchaToken] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
-  const [uploadPhase, setUploadPhase] = useState<null | "uploading" | "confirming">(null);
+  const [encryptProgress, setEncryptProgress] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState<null | "encrypting" | "uploading" | "confirming">(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captchaRef = useRef<HCaptcha>(null);
 
@@ -325,6 +326,26 @@ export default function SenderPage() {
       return;
     }
 
+    // Show encrypting phase immediately so the button disables and the progress bar appears.
+    // The animation timer also starts now, covering both the file-reading and AES-GCM phases
+    // so users never see a frozen "0%" during large file reads.
+    setUploadPhase("encrypting");
+    setEncryptProgress(0);
+    // Estimate total pre-upload work at ~100 MB/s; base64 expands files ~4/3×; 300 ms floor
+    const plaintextEstimateBytes = totalSize * (mode === "files" ? 1.34 : 1);
+    const estimatedEncryptMs = Math.max(300, (plaintextEstimateBytes / (100 * 1024 * 1024)) * 1000);
+    const encryptStart = Date.now();
+    let encryptRafId = 0;
+    const animateEncrypt = () => {
+      const elapsed = Date.now() - encryptStart;
+      const ratio = Math.min(0.95, elapsed / estimatedEncryptMs);
+      setEncryptProgress(Math.round(ratio * 100));
+      if (ratio < 0.95) {
+        encryptRafId = requestAnimationFrame(animateEncrypt);
+      }
+    };
+    encryptRafId = requestAnimationFrame(animateEncrypt);
+
     try {
       // Build payload
       let payload: SharePayload;
@@ -342,9 +363,13 @@ export default function SenderPage() {
         payload = { type: "files", files: fileData };
       }
 
-      // Encrypt
+      // Encrypt — the heuristic animation is already running from above
       const { key, rawKey, keyBase64Url } = await generateEncryptionKey();
       const encryptedData = await encryptPayload(payload, key);
+      cancelAnimationFrame(encryptRafId);
+      setEncryptProgress(100);
+      // Brief pause so users can see the completed encryption step
+      await new Promise<void>((r) => setTimeout(r, 150));
 
       let passwordHash: string | null = null;
       let passwordSalt: string | null = null;
@@ -442,6 +467,7 @@ export default function SenderPage() {
       setExpiresAt(result.expiresAt);
       setShareCreated(true);
     } catch (err: unknown) {
+      cancelAnimationFrame(encryptRafId);
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       setUploadPhase(null);
@@ -877,7 +903,7 @@ export default function SenderPage() {
                 </div>
               )}
 
-              {/* Upload progress bar (R2 path only) */}
+              {/* Progress indicator — shown during encrypting, uploading, and confirming */}
               <AnimatePresence>
                 {uploadPhase !== null && (
                   <motion.div
@@ -888,26 +914,54 @@ export default function SenderPage() {
                   >
                     <div className="flex items-center justify-between font-mono text-xs text-muted-foreground uppercase tracking-widest">
                       <span>
-                        {uploadPhase === "uploading" ? "Uploading…" : "Confirming…"}
+                        {uploadPhase === "encrypting"
+                          ? "Encrypting…"
+                          : uploadPhase === "uploading"
+                          ? "Uploading…"
+                          : "Confirming…"}
                       </span>
-                      {uploadPhase === "uploading" && (
-                        <span className="text-primary tabular-nums">{uploadProgress}%</span>
-                      )}
+                      <span className="text-primary tabular-nums">
+                        {uploadPhase === "encrypting"
+                          ? `${encryptProgress}%`
+                          : uploadPhase === "uploading"
+                          ? `${uploadProgress}%`
+                          : ""}
+                      </span>
                     </div>
                     <div className="flex gap-1 items-center">
-                      {/* Step 1: Upload bar */}
+                      {/* Step 1: Encrypt bar */}
                       <div className="flex-1 h-2 bg-muted overflow-hidden">
                         <motion.div
                           className="h-full bg-primary"
                           initial={{ width: "0%" }}
                           animate={{
-                            width: uploadPhase === "confirming" ? "100%" : `${uploadProgress}%`,
+                            width:
+                              uploadPhase === "encrypting"
+                                ? `${encryptProgress}%`
+                                : "100%",
+                          }}
+                          transition={{ ease: "linear", duration: 0.1 }}
+                        />
+                      </div>
+                      <div className="w-px h-4 bg-border shrink-0" />
+                      {/* Step 2: Upload bar */}
+                      <div className="flex-[2] h-2 bg-muted overflow-hidden">
+                        <motion.div
+                          className="h-full bg-primary"
+                          initial={{ width: "0%" }}
+                          animate={{
+                            width:
+                              uploadPhase === "uploading"
+                                ? `${uploadProgress}%`
+                                : uploadPhase === "confirming"
+                                ? "100%"
+                                : "0%",
                           }}
                           transition={{ ease: "linear", duration: 0.15 }}
                         />
                       </div>
                       <div className="w-px h-4 bg-border shrink-0" />
-                      {/* Step 2: Confirm indicator */}
+                      {/* Step 3: Confirm indicator */}
                       <div className="w-8 h-2 bg-muted overflow-hidden shrink-0">
                         <motion.div
                           className="h-full bg-primary"
@@ -920,12 +974,32 @@ export default function SenderPage() {
                       </div>
                     </div>
                     <div className="flex font-mono text-xs text-muted-foreground gap-1">
-                      <span className={uploadPhase === "uploading" ? "text-primary" : "text-foreground"}>
-                        1. Upload
+                      <span
+                        className={
+                          uploadPhase === "encrypting"
+                            ? "text-primary"
+                            : "text-foreground"
+                        }
+                      >
+                        1. Encrypt
                       </span>
                       <span className="mx-1">·</span>
-                      <span className={uploadPhase === "confirming" ? "text-primary" : ""}>
-                        2. Confirm
+                      <span
+                        className={
+                          uploadPhase === "uploading"
+                            ? "text-primary"
+                            : uploadPhase === "confirming"
+                            ? "text-foreground"
+                            : ""
+                        }
+                      >
+                        2. Upload
+                      </span>
+                      <span className="mx-1">·</span>
+                      <span
+                        className={uploadPhase === "confirming" ? "text-primary" : ""}
+                      >
+                        3. Confirm
                       </span>
                     </div>
                   </motion.div>
@@ -956,7 +1030,9 @@ export default function SenderPage() {
                       >
                         ⟳
                       </motion.span>
-                      {uploadPhase === "uploading"
+                      {uploadPhase === "encrypting"
+                        ? `ENCRYPTING… ${encryptProgress}%`
+                        : uploadPhase === "uploading"
                         ? `UPLOADING… ${uploadProgress}%`
                         : uploadPhase === "confirming"
                         ? "CONFIRMING…"
