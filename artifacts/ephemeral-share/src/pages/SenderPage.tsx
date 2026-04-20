@@ -1,6 +1,11 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { useCreateShare, useTestWebhook } from "@workspace/api-client-react";
+import {
+  useCreateShare,
+  useTestWebhook,
+  createShareUploadUrl,
+  confirmShare,
+} from "@workspace/api-client-react";
 import HCaptcha from "@hcaptcha/react-hcaptcha";
 import {
   generateEncryptionKey,
@@ -363,35 +368,17 @@ export default function SenderPage() {
       if (USE_R2_UPLOADS) {
         // ── R2 direct-upload path ──────────────────────────────────────────
         // 1. Request a presigned PUT URL from the Worker.
-        const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-        const uploadUrlRes = await fetch(`${base}/api/shares/upload-url`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ttl,
-            shareType,
-            totalSize,
-            passwordHash,
-            passwordSalt,
-            webhookUrl: webhookUrl || null,
-            webhookMessage: webhookMessage || null,
-            fileMetadata: fileMeta,
-            captchaToken: captchaToken || undefined,
-          }),
+        const { shareId: pendingId, uploadUrl } = await createShareUploadUrl({
+          ttl,
+          shareType,
+          totalSize,
+          passwordHash,
+          passwordSalt,
+          webhookUrl: webhookUrl || null,
+          webhookMessage: webhookMessage || null,
+          fileMetadata: fileMeta,
+          captchaToken: captchaToken || undefined,
         });
-
-        if (!uploadUrlRes.ok) {
-          const errData = (await uploadUrlRes.json()) as { message?: string };
-          throw Object.assign(new Error(errData.message ?? "Upload URL request failed."), {
-            response: { data: errData },
-          });
-        }
-
-        const { shareId: pendingId, uploadUrl } = (await uploadUrlRes.json()) as {
-          shareId: string;
-          uploadUrl: string;
-          expiresAt: string;
-        };
 
         // 2. PUT the encrypted ciphertext directly to R2 via XHR (exposes upload progress).
         setUploadPhase("uploading");
@@ -421,18 +408,7 @@ export default function SenderPage() {
 
         // 3. Confirm the upload — Worker verifies the R2 object exists and activates the share.
         setUploadPhase("confirming");
-        const confirmRes = await fetch(`${base}/api/shares/confirm`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ shareId: pendingId }),
-        });
-        if (!confirmRes.ok) {
-          const errData = (await confirmRes.json()) as { message?: string };
-          throw Object.assign(new Error(errData.message ?? "Upload confirmation failed."), {
-            response: { data: errData },
-          });
-        }
-        result = (await confirmRes.json()) as { shareId: string; expiresAt: string };
+        result = await confirmShare({ shareId: pendingId });
       } else {
         // ── Inline KV path (dev / legacy) ─────────────────────────────────
         result = await createShare.mutateAsync({
@@ -469,15 +445,17 @@ export default function SenderPage() {
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       setUploadPhase(null);
-      // Check for rate limit
-      const anyErr = err as { response?: { data?: { retryAfterSeconds?: number; message?: string } } };
-      if (anyErr?.response?.data?.retryAfterSeconds) {
-        setRateLimitSeconds(anyErr.response.data.retryAfterSeconds);
+      // ApiError (from generated client) stores the parsed body in .data;
+      // legacy raw-fetch errors store it in .response.data.
+      type ErrData = { retryAfterSeconds?: number; message?: string };
+      const errData: ErrData | undefined =
+        (err as { data?: ErrData }).data ??
+        (err as { response?: { data?: ErrData } }).response?.data;
+      if (errData?.retryAfterSeconds) {
+        setRateLimitSeconds(errData.retryAfterSeconds);
         setError("");
       } else {
-        setError(
-          anyErr?.response?.data?.message ?? "Failed to create share. Please try again."
-        );
+        setError(errData?.message ?? "Failed to create share. Please try again.");
       }
     }
   };

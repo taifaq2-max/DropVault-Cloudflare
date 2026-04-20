@@ -17,6 +17,8 @@ import type {
 } from "@tanstack/react-query";
 
 import type {
+  ConfirmShareRequest,
+  ConfirmShareResponse,
   CreateShareRequest,
   CreateShareResponse,
   DeleteShareResponse,
@@ -31,6 +33,8 @@ import type {
   ShareErrorResponse,
   TestWebhookRequest,
   TestWebhookResponse,
+  UploadUrlRequest,
+  UploadUrlResponse,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -577,6 +581,182 @@ export function usePeekShare<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * Returns a presigned R2 PUT URL for direct client-to-storage upload of encrypted data
+ * @summary Request a presigned R2 upload URL
+ */
+export const getCreateShareUploadUrlUrl = () => {
+  return `/api/shares/upload-url`;
+};
+
+export const createShareUploadUrl = async (
+  uploadUrlRequest: UploadUrlRequest,
+  options?: RequestInit,
+): Promise<UploadUrlResponse> => {
+  return customFetch<UploadUrlResponse>(getCreateShareUploadUrlUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(uploadUrlRequest),
+  });
+};
+
+export const getCreateShareUploadUrlMutationOptions = <
+  TError = ErrorType<ErrorResponse | RateLimitErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createShareUploadUrl>>,
+    TError,
+    { data: BodyType<UploadUrlRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof createShareUploadUrl>>,
+  TError,
+  { data: BodyType<UploadUrlRequest> },
+  TContext
+> => {
+  const mutationKey = ["createShareUploadUrl"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof createShareUploadUrl>>,
+    { data: BodyType<UploadUrlRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return createShareUploadUrl(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type CreateShareUploadUrlMutationResult = NonNullable<
+  Awaited<ReturnType<typeof createShareUploadUrl>>
+>;
+export type CreateShareUploadUrlMutationBody = BodyType<UploadUrlRequest>;
+export type CreateShareUploadUrlMutationError = ErrorType<
+  ErrorResponse | RateLimitErrorResponse
+>;
+
+/**
+ * @summary Request a presigned R2 upload URL
+ */
+export const useCreateShareUploadUrl = <
+  TError = ErrorType<ErrorResponse | RateLimitErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof createShareUploadUrl>>,
+    TError,
+    { data: BodyType<UploadUrlRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof createShareUploadUrl>>,
+  TError,
+  { data: BodyType<UploadUrlRequest> },
+  TContext
+> => {
+  return useMutation(getCreateShareUploadUrlMutationOptions(options));
+};
+
+/**
+ * Called after the client has successfully PUT data to the presigned URL; verifies the R2 object exists and activates the share
+ * @summary Confirm a direct R2 upload and activate the share
+ */
+export const getConfirmShareUrl = () => {
+  return `/api/shares/confirm`;
+};
+
+export const confirmShare = async (
+  confirmShareRequest: ConfirmShareRequest,
+  options?: RequestInit,
+): Promise<ConfirmShareResponse> => {
+  return customFetch<ConfirmShareResponse>(getConfirmShareUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(confirmShareRequest),
+  });
+};
+
+export const getConfirmShareMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof confirmShare>>,
+    TError,
+    { data: BodyType<ConfirmShareRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof confirmShare>>,
+  TError,
+  { data: BodyType<ConfirmShareRequest> },
+  TContext
+> => {
+  const mutationKey = ["confirmShare"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof confirmShare>>,
+    { data: BodyType<ConfirmShareRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return confirmShare(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ConfirmShareMutationResult = NonNullable<
+  Awaited<ReturnType<typeof confirmShare>>
+>;
+export type ConfirmShareMutationBody = BodyType<ConfirmShareRequest>;
+export type ConfirmShareMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Confirm a direct R2 upload and activate the share
+ */
+export const useConfirmShare = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof confirmShare>>,
+    TError,
+    { data: BodyType<ConfirmShareRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof confirmShare>>,
+  TError,
+  { data: BodyType<ConfirmShareRequest> },
+  TContext
+> => {
+  return useMutation(getConfirmShareMutationOptions(options));
+};
 
 /**
  * @summary Test a webhook URL

@@ -6,6 +6,8 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./confirmShareRequest";
+export * from "./confirmShareResponse";
 export * from "./createShareRequest";
 export * from "./createShareRequestShareType";
 export * from "./createShareResponse";
@@ -24,3 +26,6 @@ export * from "./rateLimitErrorResponse";
 export * from "./shareErrorResponse";
 export * from "./testWebhookRequest";
 export * from "./testWebhookResponse";
+export * from "./uploadUrlRequest";
+export * from "./uploadUrlRequestShareType";
+export * from "./uploadUrlResponse";

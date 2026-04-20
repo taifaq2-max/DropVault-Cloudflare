@@ -133,6 +133,59 @@ export interface RateLimitErrorResponse {
   retryAfterSeconds: number;
 }
 
+export type UploadUrlRequestShareType =
+  (typeof UploadUrlRequestShareType)[keyof typeof UploadUrlRequestShareType];
+
+export const UploadUrlRequestShareType = {
+  text: "text",
+  files: "files",
+  mixed: "mixed",
+} as const;
+
+export interface UploadUrlRequest {
+  /**
+   * Time-to-live in seconds (60 to 345600)
+   * @minimum 60
+   * @maximum 345600
+   */
+  ttl: number;
+  shareType: UploadUrlRequestShareType;
+  /** Total size of the encrypted payload in bytes */
+  totalSize: number;
+  /** Optional PBKDF2-derived hash of the password */
+  passwordHash?: string | null;
+  /** Base64-encoded salt used for password hashing */
+  passwordSalt?: string | null;
+  /** Optional HTTPS webhook URL */
+  webhookUrl?: string | null;
+  /** Optional custom webhook message */
+  webhookMessage?: string | null;
+  fileMetadata?: FileMetadata[] | null;
+  /** hCaptcha response token; empty string accepted only when server-side verification is disabled (dev mode) */
+  captchaToken?: string;
+}
+
+export interface UploadUrlResponse {
+  /** Temporary share ID for the pending upload */
+  shareId: string;
+  /** Presigned R2 PUT URL to upload encrypted data directly */
+  uploadUrl: string;
+  /** ISO timestamp when the presigned URL expires */
+  expiresAt: string;
+}
+
+export interface ConfirmShareRequest {
+  /** The shareId received from the upload-url response */
+  shareId: string;
+}
+
+export interface ConfirmShareResponse {
+  /** The activated share ID */
+  shareId: string;
+  /** ISO timestamp when the share expires */
+  expiresAt: string;
+}
+
 export interface ShareErrorResponse {
   error: string;
   message: string;

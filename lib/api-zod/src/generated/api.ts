@@ -178,6 +178,74 @@ export const PeekShareResponse = zod.object({
 });
 
 /**
+ * Returns a presigned R2 PUT URL for direct client-to-storage upload of encrypted data
+ * @summary Request a presigned R2 upload URL
+ */
+export const createShareUploadUrlBodyTtlMin = 60;
+export const createShareUploadUrlBodyTtlMax = 345600;
+
+export const CreateShareUploadUrlBody = zod.object({
+  ttl: zod
+    .number()
+    .min(createShareUploadUrlBodyTtlMin)
+    .max(createShareUploadUrlBodyTtlMax)
+    .describe("Time-to-live in seconds (60 to 345600)"),
+  shareType: zod.enum(["text", "files", "mixed"]),
+  totalSize: zod
+    .number()
+    .describe("Total size of the encrypted payload in bytes"),
+  passwordHash: zod
+    .string()
+    .nullish()
+    .describe("Optional PBKDF2-derived hash of the password"),
+  passwordSalt: zod
+    .string()
+    .nullish()
+    .describe("Base64-encoded salt used for password hashing"),
+  webhookUrl: zod.string().nullish().describe("Optional HTTPS webhook URL"),
+  webhookMessage: zod
+    .string()
+    .nullish()
+    .describe("Optional custom webhook message"),
+  fileMetadata: zod
+    .array(
+      zod.object({
+        name: zod.string(),
+        size: zod.number(),
+        type: zod.string(),
+        originalIndex: zod.number(),
+      }),
+    )
+    .nullish(),
+  captchaToken: zod
+    .string()
+    .optional()
+    .describe(
+      "hCaptcha response token; empty string accepted only when server-side verification is disabled (dev mode)",
+    ),
+});
+
+export const CreateShareUploadUrlResponse = zod.object({
+  shareId: zod.string().describe("Temporary share ID for the pending upload"),
+  uploadUrl: zod
+    .string()
+    .describe("Presigned R2 PUT URL to upload encrypted data directly"),
+  expiresAt: zod
+    .string()
+    .describe("ISO timestamp when the presigned URL expires"),
+});
+
+/**
+ * Called after the client has successfully PUT data to the presigned URL; verifies the R2 object exists and activates the share
+ * @summary Confirm a direct R2 upload and activate the share
+ */
+export const ConfirmShareBody = zod.object({
+  shareId: zod
+    .string()
+    .describe("The shareId received from the upload-url response"),
+});
+
+/**
  * @summary Test a webhook URL
  */
 export const TestWebhookBody = zod.object({

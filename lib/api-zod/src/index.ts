@@ -1,5 +1,7 @@
 export * from "./generated/api";
 export type {
+  ConfirmShareRequest,
+  ConfirmShareResponse,
   CreateShareRequest,
   CreateShareRequestShareType,
   CreateShareResponse,
@@ -12,4 +14,7 @@ export type {
   RateLimitErrorResponse,
   ShareErrorResponse,
   TestWebhookRequest,
+  UploadUrlRequest,
+  UploadUrlRequestShareType,
+  UploadUrlResponse,
 } from "./generated/types";
