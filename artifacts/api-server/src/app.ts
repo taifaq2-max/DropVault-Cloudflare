@@ -20,10 +20,16 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// CORS - allow same-origin frontend
+// CORS - restrict to configured frontend origin
+const ALLOWED_ORIGIN =
+  process.env["FRONTEND_URL"] ||
+  (process.env["NODE_ENV"] === "production"
+    ? undefined
+    : "http://localhost:3000");
+
 app.use(
   cors({
-    origin: true,
+    origin: ALLOWED_ORIGIN,
     credentials: true,
   })
 );

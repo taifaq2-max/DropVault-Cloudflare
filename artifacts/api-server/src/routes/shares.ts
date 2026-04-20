@@ -54,9 +54,12 @@ function randomHumorous(): string {
 }
 
 function getClientIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
+  if (process.env["TRUST_PROXY"] === "true") {
+    const forwarded = req.headers["x-forwarded-for"];
+    if (typeof forwarded === "string") {
+      const ips = forwarded.split(",").map((s) => s.trim());
+      return ips[ips.length - 1] || req.socket?.remoteAddress || "unknown";
+    }
   }
   return req.socket?.remoteAddress ?? "unknown";
 }
@@ -107,7 +110,7 @@ router.post("/shares", async (req: Request, res: Response) => {
     res.status(400).json({
       error: "validation_error",
       message: parsed.error.issues
-        .map((i) => i.message)
+        .map((issue: { message: string }) => issue.message)
         .join(", "),
     });
     return;
@@ -136,6 +139,14 @@ router.post("/shares", async (req: Request, res: Response) => {
     res.status(507).json({
       error: "insufficient_memory",
       message: "Platform is busy. Please try again later.",
+    });
+    return;
+  }
+
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(body.encryptedData)) {
+    res.status(400).json({
+      error: "invalid_data",
+      message: "encryptedData must be valid base64",
     });
     return;
   }
@@ -280,8 +291,39 @@ router.delete("/shares/:shareId", async (req: Request, res: Response) => {
   });
 });
 
+// Block RFC-1918, loopback, link-local, and cloud-metadata hostnames (SSRF guard)
+const BLOCKED_HOST_PATTERNS = [
+  /^localhost$/i,
+  /^127\./,
+  /^10\./,
+  /^172\.(1[6-9]|2[0-9]|3[01])\./,
+  /^192\.168\./,
+  /^169\.254\./,
+  /^::1$/,
+  /^fc00:/i,
+  /^fe80:/i,
+  /metadata\.google\.internal$/i,
+  /metadata\.googleusercontent\.com$/i,
+];
+
+function isBlockedHost(hostname: string): boolean {
+  return BLOCKED_HOST_PATTERNS.some((p) => p.test(hostname));
+}
+
 // POST /api/webhook/test
 router.post("/webhook/test", async (req: Request, res: Response) => {
+  // Rate-limit webhook test by IP (3 attempts per minute, shared bucket with share creation)
+  const ip = getClientIp(req);
+  const rateLimit = checkRateLimit(`webhook:${ip}`);
+  if (!rateLimit.allowed) {
+    res.status(429).json({
+      error: "rate_limit_exceeded",
+      message: "Too many webhook test requests. Please wait.",
+      retryAfterSeconds: rateLimit.retryAfterSeconds,
+    });
+    return;
+  }
+
   const parsed = TestWebhookBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -309,6 +351,15 @@ router.post("/webhook/test", async (req: Request, res: Response) => {
     res.status(400).json({
       error: "invalid_url",
       message: "Webhook URL must use HTTPS",
+    });
+    return;
+  }
+
+  // SSRF protection: block internal/private hosts
+  if (isBlockedHost(url.hostname)) {
+    res.status(400).json({
+      error: "invalid_url",
+      message: "Webhook URL must point to a public host",
     });
     return;
   }

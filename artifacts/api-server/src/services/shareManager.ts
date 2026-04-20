@@ -29,14 +29,7 @@ let containersCreated = 0;
 let containersDelivered = 0;
 
 export function generateShareId(): string {
-  const chars =
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-  const randomBytes = crypto.randomBytes(64);
-  let id = "";
-  for (let i = 0; i < 64; i++) {
-    id += chars[randomBytes[i] % chars.length];
-  }
-  return id;
+  return crypto.randomBytes(48).toString("base64url");
 }
 
 export function createShare(params: {

@@ -25,6 +25,8 @@ services:
       NODE_ENV: production
       SESSION_SECRET: ${SESSION_SECRET}
       HCAPTCHA_SECRET_KEY: ${HCAPTCHA_SECRET_KEY}
+      FRONTEND_URL: ${FRONTEND_URL}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       DEBUG: ${DEBUG:-false}
     networks:
       - internal

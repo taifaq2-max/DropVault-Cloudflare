@@ -1,0 +1,180 @@
+Overall Risk Level: MEDIUM                                                                                                                      
+                                                                                                                                                  
+  The DropVault application implements a solid zero-knowledge encryption architecture with AES-GCM. However, several security issues were         
+  identified, ranging from low to medium severity.          
+                                                                                                                                                  
+  ---                                                                                                                                             
+  🔴 Critical Issues                                                                                                                              
+                                                                                                                                                  
+  1. No Input Sanitization on encryptedData Payload         
+                                                                                                                                                  
+  - Location: artifacts/api-server/src/routes/shares.ts:143-153                                                                                   
+  - Issue: The encryptedData field is stored directly in memory without any validation. While it's treated as opaque ciphertext, a malicious      
+  client could send extremely large payloads (up to 2.5MB limit) or specially crafted data that might cause issues when deserialized.             
+  - Recommendation: Add validation that encryptedData is valid base64 format before storing.
+                                                                                                                                                  
+  // Add validation                                                                                                                               
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(body.encryptedData)) {                                                                                          
+    return res.status(400).json({ error: "invalid_data", message: "encryptedData must be base64" });                                              
+  }                                                                                                                                               
+                                                                                                                                                  
+  ---                                                                                                                                             
+  🟠 Medium Severity Issues                                 
+                                                                                                                                                  
+  2. CORS Configuration Allows Any Origin
+                                                                                                                                                  
+  - Location: artifacts/api-server/src/app.ts:24-29                                                                                               
+  - Issue: cors({ origin: true, credentials: true }) allows any origin to make credentialed requests to the API. This is dangerous if the app ever
+   implements authentication.                                                                                                                     
+  - Recommendation: Restrict to specific origins:           
+                                                                                                                                                  
+  cors({                                                    
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",                                                                                  
+    credentials: true,                                                                                                                            
+  })                                                                                                                                              
+                                                                                                                                                  
+  3. IP Spoofing Possible via X-Forwarded-For                                                                                                     
+                                                            
+  - Location: artifacts/api-server/src/routes/shares.ts:56-62                                                                                     
+  - Issue: The getClientIp() function blindly trusts the first IP in X-Forwarded-For header. An attacker can spoof this header to bypass rate
+  limiting or exhaust the victim's rate limit quota.                                                                                              
+  - Recommendation: Trust only the last IP from trusted proxies:
+                                                                                                                                                  
+  function getClientIp(req: Request): string {                                                                                                    
+    // Only use X-Forwarded-For if behind trusted proxy                                                                                           
+    if (process.env.TRUST_PROXY === "true") {                                                                                                     
+      const forwarded = req.headers["x-forwarded-for"];                                                                                           
+      if (typeof forwarded === "string") {                                                                                                        
+        // Take the last IP (closest to server)                                                                                                   
+        const ips = forwarded.split(",").map(s => s.trim());                                                                                      
+        return ips[ips.length - 1] || req.socket?.remoteAddress || "unknown";                                                                     
+      }                                                                                                                                           
+    }                                                                                                                                             
+    return req.socket?.remoteAddress ?? "unknown";                                                                                                
+  }                                                                                                                                               
+                                                                                                                                                  
+  4. Webhook SSRF Vulnerability                                                                                                                   
+                                                                                                                                                  
+  - Location: artifacts/api-server/src/routes/shares.ts:284-344                                                                                   
+  - Issue: The webhook test endpoint allows making HTTP requests to any HTTPS URL. An attacker could use this to probe internal networks or access
+   cloud metadata services (AWS IMDS, etc.).                                                                                                      
+  - Recommendation: Add SSRF protection:                    
+                                                                                                                                                  
+  // Block internal IP ranges                                                                                                                     
+  const BLOCKED_HOSTS = [                                                                                                                         
+    /^localhost$/i,                                                                                                                               
+    /^127\./,                                                                                                                                     
+    /^10\./,                                                                                                                                      
+    /^172\.(1[6-9]|2[0-9]|3[01])\./,                                                                                                              
+    /^192\.168\./,                                                                                                                                
+    /^169\.254\./,  // Link-local                                                                                                                 
+    /metadata\.google\.internal/,                                                                                                                 
+    /metadata\.googleusercontent\.com/,                                                                                                           
+  ];                                                                                                                                              
+                                                                                                                                                  
+  // Check for blocked hosts before making request                                                                                                
+                                                            
+  5. Timing Attack on Password Hash                                                                                                               
+                                                            
+  - Location: Client-side in crypto.ts                                                                                                            
+  - Issue: The password-protected shares don't actually store a hash on the server. The server stores passwordHash but this is actually the
+  PBKDF2-derived key, not a verification hash. The actual password verification happens client-side, which is actually correct for zero-knowledge 
+  design.                                                   
+  - Status: This is actually working as intended - the server never sees the password or its hash.                                                
+                                                                                                                                                  
+  ---                                                                                                                                             
+  🟡 Low Severity Issues                                                                                                                          
+                                                                                                                                                  
+  6. Weak Random ID Generation                              
+                                                                                                                                                  
+  - Location: artifacts/api-server/src/services/shareManager.ts:31-40                                                                             
+  - Issue: Uses modulo bias when generating share IDs. The 64-character ID uses randomBytes[i] % chars.length which slightly biases toward certain
+   characters.                                                                                                                                    
+  - Recommendation: Use crypto.randomUUID() or proper base64url encoding:
+                                                                                                                                                  
+  export function generateShareId(): string {               
+    return crypto.randomBytes(48).toString('base64url'); // 64 chars                                                                              
+  }                                                                                                                                               
+                                                                                                                                                  
+  7. Information Disclosure in Error Messages                                                                                                     
+                                                            
+  - Location: artifacts/api-server/src/app.ts:51-56                                                                                               
+  - Issue: Error messages expose whether a share exists, has been accessed, or expired - leaks information about share lifecycle.
+  - Status: This is by design for usability, but consider using consistent error messages for sensitive operations.                               
+                                                                                                                                                  
+  8. Missing Security Headers on API                                                                                                              
+                                                                                                                                                  
+  - Location: artifacts/api-server/src/app.ts:11-21                                                                                               
+  - Issue: While nginx adds security headers, direct API access (if accidentally exposed) lacks them.
+  - Recommendation: Ensure API is never exposed directly without nginx proxy.                                                                     
+                                                                                                                                                  
+  ---                                                                                                                                             
+  ✅ Security Strengths                                                                                                                           
+                                                                                                                                                  
+  1. Zero-Knowledge Architecture: Encryption keys never touch the server
+  2. AES-GCM with Random IVs: Proper authenticated encryption                                                                                     
+  3. PBKDF2 Key Derivation: 100,000 iterations for password-based keys                                                                            
+  4. Rate Limiting: 3 requests/minute per IP                                                                                                      
+  5. In-Memory Storage: No persistent data reduces attack surface                                                                                 
+  6. One-Time Access: Shares auto-delete after first retrieval                                                                                    
+  7. Docker Security:                                                                                                                             
+    - Non-root user (vaultdrop)                                                                                                                   
+    - API port not exposed to host                                                                                                                
+    - Read-only TLS mounts                                                                                                                        
+  8. TLS Configuration: Modern cipher suites, HSTS, OCSP stapling                                                                                 
+  9. CSP Headers: Restrictive content security policy                                                                                             
+  10. Zod Validation: Input schemas validated on API                                                                                              
+                                                                                                                                                  
+  ---                                                                                                                                             
+  📋 Recommendations                                        
+                                                                                                                                                  
+  ┌──────────┬──────────────────────────────────────────────┬────────┐
+  │ Priority │                    Action                    │ Effort │                                                                            
+  ├──────────┼──────────────────────────────────────────────┼────────┤                                                                            
+  │ Critical │ Add base64 validation on encryptedData       │ Low    │                                                                            
+  ├──────────┼──────────────────────────────────────────────┼────────┤                                                                            
+  │ High     │ Fix CORS to allow specific origins only      │ Low    │                                                                            
+  ├──────────┼──────────────────────────────────────────────┼────────┤                                                                            
+  │ High     │ Implement SSRF protection for webhooks       │ Medium │                                                                            
+  ├──────────┼──────────────────────────────────────────────┼────────┤                                                                            
+  │ Medium   │ Fix IP extraction from X-Forwarded-For       │ Low    │
+  ├──────────┼──────────────────────────────────────────────┼────────┤                                                                            
+  │ Medium   │ Use crypto.randomBytes for share IDs         │ Low    │
+  ├──────────┼──────────────────────────────────────────────┼────────┤                                                                            
+  │ Low      │ Add rate limiting for webhook test endpoint  │ Low    │
+  ├──────────┼──────────────────────────────────────────────┼────────┤                                                                            
+  │ Low      │ Consider rate limit by share ID, not just IP │ Medium │
+  └──────────┴──────────────────────────────────────────────┴────────┘                                                                            
+                                                            
+  ---                                                                                                                                             
+  Container Security                                        
+                    
+  Dockerfile.api:
+  - ✅ Multi-stage build reduces attack surface                                                                                                   
+  - ✅ Runs as non-root user (vaultdrop)                                                                                                          
+  - ✅ Health check implemented                                                                                                                   
+  - ✅ Source maps enabled for debugging                                                                                                          
+                                                                                                                                                  
+  Dockerfile.frontend:                                                                                                                            
+  - ✅ Multi-stage build                                                                                                                          
+  - ✅ Minimal nginx:alpine runtime                                                                                                               
+  - ✅ Platform exclusion fix applied                                                                                                             
+                                                                                                                                                  
+  nginx.conf:                                                                                                                                     
+  - ✅ TLS 1.2/1.3 only                                                                                                                           
+  - ✅ Modern cipher suites                                                                                                                       
+  - ✅ HSTS enabled                                                                                                                               
+  - ✅ CSP headers configured                                                                                                                     
+  - ✅ Frame options deny                                                                                                                         
+  - ✅ Client max body size limited (4MB)                                                                                                         
+                                                                                                                                                  
+  ---                                                                                                                                             
+  Encryption Review                                                                                                                               
+                                                                                                                                                  
+  Client-side crypto.ts:                                    
+  - ✅ AES-GCM-256 with 12-byte random IVs                                                                                                        
+  - ✅ PBKDF2 with 100,000 iterations, SHA-256                                                                                                    
+  - ✅ Secure random key generation via crypto.getRandomValues                                                                                    
+  - ✅ Proper base64/base64url encoding                                                                                                           
+                                                                                                                                                  
+  No issues found with the cryptographic implementation - it follows best practices for browser-based encryption.    
