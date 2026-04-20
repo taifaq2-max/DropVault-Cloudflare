@@ -23,7 +23,20 @@ const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET_KEY ?? "";
 const HCAPTCHA_VERIFY_URL = "https://api.hcaptcha.com/siteverify";
 
 // ── Access nonce (stateless HMAC-SHA256 token issued at peek, verified at access) ──
-const NONCE_SECRET = process.env["SESSION_SECRET"] ?? "dev-nonce-secret";
+// SESSION_SECRET is REQUIRED when captcha enforcement is active — fail fast to prevent
+// predictable nonce forgery from a hardcoded fallback key.
+const NONCE_SECRET = (() => {
+  const secret = process.env["SESSION_SECRET"];
+  if (!secret && HCAPTCHA_SECRET) {
+    throw new Error(
+      "[VaultDrop] SESSION_SECRET must be set when HCAPTCHA_SECRET_KEY is configured. " +
+        "Without it, access nonces can be forged and the captcha gate is bypassed."
+    );
+  }
+  // "dev-nonce-secret" is only reachable in dev mode (HCAPTCHA_SECRET_KEY absent),
+  // where nonce validation is skipped entirely — so the value never matters for security.
+  return secret ?? "dev-nonce-secret";
+})();
 const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 function generateAccessNonce(shareId: string, ip: string): string {
