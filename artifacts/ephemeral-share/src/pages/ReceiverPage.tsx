@@ -111,6 +111,9 @@ export default function ReceiverPage() {
   const captchaRef = useRef<HCaptcha>(null);
   const captchaTheme: "dark" | "light" = theme === "dark" ? "dark" : "light";
 
+  // Nonce issued by the peek endpoint — required by the access endpoint
+  const [accessNonce, setAccessNonce] = useState("");
+
   // Persisted share data across phases
   const [shareData, setShareData] = useState<GetShareData | null>(null);
   const [peekData, setPeekData] = useState<{ totalSize: number; passwordRequired: boolean; shareType: string; fileCount: number; expiresAt: string } | null>(null);
@@ -126,7 +129,7 @@ export default function ReceiverPage() {
       const data = await res.json().catch(() => ({})) as { error?: string; humorousMessage?: string; message?: string };
       throw { status: res.status, data };
     }
-    return res.json() as Promise<{ totalSize: number; passwordRequired: boolean; shareType: string; fileCount: number; expiresAt: string }>;
+    return res.json() as Promise<{ totalSize: number; passwordRequired: boolean; shareType: string; fileCount: number; expiresAt: string; accessNonce?: string }>;
   }, [shareId]);
 
   useEffect(() => {
@@ -134,6 +137,7 @@ export default function ReceiverPage() {
     fetchPeek()
       .then((data) => {
         setPeekData(data);
+        if (data.accessNonce) setAccessNonce(data.accessNonce);
         setPhase("warning");
       })
       .catch((err: unknown) => {
@@ -156,6 +160,7 @@ export default function ReceiverPage() {
     try {
       const data = await fetchPeek(captchaToken);
       setPeekData(data);
+      if (data.accessNonce) setAccessNonce(data.accessNonce);
       setCaptchaGateError("");
       setPhase("warning");
     } catch (err: unknown) {
@@ -190,12 +195,13 @@ export default function ReceiverPage() {
     }
   };
 
-  const fetchShare = useCallback(async (): Promise<GetShareData | null> => {
+  const fetchShare = useCallback(async (nonce?: string): Promise<GetShareData | null> => {
     const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     const url = new URL(`${window.location.origin}${base}/api/shares/${shareId}`);
+    if (nonce) url.searchParams.set("accessNonce", nonce);
     const res = await fetch(url.toString());
     if (!res.ok) {
-      const data = await res.json().catch(() => ({})) as { humorousMessage?: string; message?: string };
+      const data = await res.json().catch(() => ({})) as { error?: string; humorousMessage?: string; message?: string };
       throw { status: res.status, data };
     }
     return res.json() as Promise<GetShareData>;
@@ -212,7 +218,7 @@ export default function ReceiverPage() {
     setPhase("decrypting");
 
     try {
-      const data = await fetchShare();
+      const data = await fetchShare(accessNonce || undefined);
       if (!data) throw new Error("No data returned");
       setShareData(data);
 

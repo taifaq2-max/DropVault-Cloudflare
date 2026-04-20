@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   createShare,
@@ -20,6 +21,32 @@ const router: IRouter = Router();
 
 const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET_KEY ?? "";
 const HCAPTCHA_VERIFY_URL = "https://api.hcaptcha.com/siteverify";
+
+// ── Access nonce (stateless HMAC-SHA256 token issued at peek, verified at access) ──
+const NONCE_SECRET = process.env["SESSION_SECRET"] ?? "dev-nonce-secret";
+const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+function generateAccessNonce(shareId: string, ip: string): string {
+  const ts = Date.now().toString();
+  const payload = `${shareId}:${ip}:${ts}`;
+  const sig = crypto.createHmac("sha256", NONCE_SECRET).update(payload).digest("base64url");
+  return `${sig}.${ts}`;
+}
+
+function validateAccessNonce(nonce: string, shareId: string, ip: string): boolean {
+  const dot = nonce.lastIndexOf(".");
+  if (dot === -1) return false;
+  const sig = nonce.slice(0, dot);
+  const ts = nonce.slice(dot + 1);
+  const tsNum = parseInt(ts, 10);
+  if (isNaN(tsNum) || Date.now() - tsNum > NONCE_TTL_MS) return false;
+  const payload = `${shareId}:${ip}:${ts}`;
+  const expected = crypto.createHmac("sha256", NONCE_SECRET).update(payload).digest("base64url");
+  const sigBuf = Buffer.from(sig);
+  const expectedBuf = Buffer.from(expected);
+  if (sigBuf.length !== expectedBuf.length) return false;
+  return crypto.timingSafeEqual(sigBuf, expectedBuf);
+}
 
 async function verifyCaptcha(token: string, ip: string): Promise<boolean> {
   const params = new URLSearchParams({
@@ -233,18 +260,36 @@ router.get("/shares/:shareId/peek", async (req: Request, res: Response) => {
     return;
   }
 
+  // Issue a short-lived HMAC nonce so the access endpoint can verify the
+  // visitor passed through the captcha gate without requiring a second solve.
+  const accessNonce = HCAPTCHA_SECRET ? generateAccessNonce(shareId, ip) : undefined;
+
   res.json({
     totalSize: share.totalSize,
     passwordRequired: share.passwordHash !== null,
     shareType: share.shareType,
     fileCount: share.fileMetadata?.length ?? 0,
     expiresAt: new Date(share.expiresAt).toISOString(),
+    ...(accessNonce !== undefined ? { accessNonce } : {}),
   });
 });
 
 // GET /api/shares/:shareId — retrieve and mark accessed
 router.get("/shares/:shareId", async (req: Request, res: Response) => {
   const shareId = req.params["shareId"] as string;
+  const ip = getClientIp(req);
+
+  // Verify the nonce issued at peek time (skipped in dev mode without hCaptcha key)
+  if (HCAPTCHA_SECRET) {
+    const nonce = req.query["accessNonce"];
+    if (!nonce || typeof nonce !== "string" || !validateAccessNonce(nonce, shareId, ip)) {
+      res.status(403).json({
+        error: "invalid_nonce",
+        message: "Access denied. Please return to the share link and try again.",
+      });
+      return;
+    }
+  }
 
   const share = getShare(shareId);
 
