@@ -141,6 +141,32 @@ describe("Nonce protection (HCAPTCHA_SECRET_KEY enabled)", () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("invalid_nonce");
   });
+
+  it("rejects a replayed nonce within the TTL window (403, not 410)", async () => {
+    const shareId = await createShare();
+
+    // Peek to obtain a fresh, valid nonce
+    const peekRes = await request(app)
+      .get(`/api/shares/${shareId}/peek`)
+      .query({ captchaToken: "valid-token" });
+    expect(peekRes.status).toBe(200);
+    const { accessNonce } = peekRes.body as { accessNonce: string };
+
+    // First access — consumes both the nonce and the share
+    const first = await request(app)
+      .get(`/api/shares/${shareId}`)
+      .query({ accessNonce });
+    expect(first.status).toBe(200);
+
+    // Replay the same nonce — must be rejected as invalid_nonce (403)
+    // Without revocation this would return 410 already_accessed;
+    // with revocation the nonce check fires first.
+    const replay = await request(app)
+      .get(`/api/shares/${shareId}`)
+      .query({ accessNonce });
+    expect(replay.status).toBe(403);
+    expect(replay.body.error).toBe("invalid_nonce");
+  });
 });
 
 describe("Server startup: fail fast if HCAPTCHA_SECRET_KEY set without SESSION_SECRET", () => {

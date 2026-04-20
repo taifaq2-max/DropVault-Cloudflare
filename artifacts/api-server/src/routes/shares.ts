@@ -39,6 +39,18 @@ const NONCE_SECRET = (() => {
 })();
 const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+// ── Single-use nonce revocation store ──
+// Maps nonce → expiry timestamp so we can evict old entries without a full scan.
+const usedNonces = new Map<string, number>();
+
+// Sweep expired entries every TTL window so memory stays bounded.
+setInterval(() => {
+  const now = Date.now();
+  for (const [nonce, expiry] of usedNonces) {
+    if (now > expiry) usedNonces.delete(nonce);
+  }
+}, NONCE_TTL_MS).unref(); // .unref() keeps the timer from preventing process exit
+
 function generateAccessNonce(shareId: string, ip: string): string {
   const ts = Date.now().toString();
   const payload = `${shareId}:${ip}:${ts}`;
@@ -53,12 +65,24 @@ function validateAccessNonce(nonce: string, shareId: string, ip: string): boolea
   const ts = nonce.slice(dot + 1);
   const tsNum = parseInt(ts, 10);
   if (isNaN(tsNum) || Date.now() - tsNum > NONCE_TTL_MS) return false;
+  // Replay guard: reject already-consumed nonces
+  if (usedNonces.has(nonce)) return false;
   const payload = `${shareId}:${ip}:${ts}`;
   const expected = crypto.createHmac("sha256", NONCE_SECRET).update(payload).digest("base64url");
   const sigBuf = Buffer.from(sig);
   const expectedBuf = Buffer.from(expected);
   if (sigBuf.length !== expectedBuf.length) return false;
   return crypto.timingSafeEqual(sigBuf, expectedBuf);
+}
+
+/** Mark a nonce as consumed so it cannot be replayed within its TTL window. */
+function revokeNonce(nonce: string): void {
+  const dot = nonce.lastIndexOf(".");
+  if (dot === -1) return;
+  const tsNum = parseInt(nonce.slice(dot + 1), 10);
+  if (!isNaN(tsNum)) {
+    usedNonces.set(nonce, tsNum + NONCE_TTL_MS);
+  }
 }
 
 async function verifyCaptcha(token: string, ip: string): Promise<boolean> {
@@ -313,6 +337,8 @@ router.get("/shares/:shareId", async (req: Request, res: Response) => {
       });
       return;
     }
+    // Immediately revoke the nonce so it cannot be replayed within its TTL window.
+    revokeNonce(nonce);
   }
 
   const share = getShare(shareId);
