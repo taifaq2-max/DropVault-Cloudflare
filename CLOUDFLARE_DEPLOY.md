@@ -216,19 +216,14 @@ while also using Option A/B will break CORS and cause 404s.
 
 ### Option B — Pages Function proxy (no custom domain, e.g. `*.pages.dev`)
 
-Create `artifacts/ephemeral-share/functions/api/[[route]].ts`:
+The proxy function is already included at
+`artifacts/ephemeral-share/functions/api/[[route]].ts`. It forwards all
+`/api/*` requests — including bodies, headers, and streaming responses — to
+your Worker, and returns a clear `502` if `WORKER_URL` is not configured.
 
-```typescript
-// Proxy all /api/* requests to the Worker
-export const onRequest: PagesFunction = async (context) => {
-  const workerUrl = context.env.WORKER_URL as string;
-  const url = new URL(context.request.url);
-  const target = new URL(url.pathname + url.search, workerUrl);
-  return fetch(target, context.request);
-};
-```
-
-Add `WORKER_URL` as a Pages secret:
+Add `WORKER_URL` as a Pages secret (under **Settings → Environment variables
+→ Add secret**). The value must be the Worker origin with **no trailing slash
+and no path suffix** — the function appends the full `/api/…` path itself:
 ```
 https://vaultdrop-api.<account>.workers.dev
 ```
@@ -276,6 +271,7 @@ Replace the origin with your actual Pages or custom domain.
 | `VITE_API_URL` | Yes | For custom domain routing | Worker URL |
 | `VITE_USE_R2_UPLOADS` | Yes | No | Set `true` to enable 420 MB uploads |
 | `VITE_HCAPTCHA_SITE_KEY` | Yes | No | hCaptcha site key (frontend) |
+| `WORKER_URL` | No (runtime secret) | Option B only | Worker URL used by the Pages Function proxy |
 
 ---
 
