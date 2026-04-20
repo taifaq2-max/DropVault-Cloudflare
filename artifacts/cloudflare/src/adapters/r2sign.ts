@@ -67,7 +67,7 @@ async function deriveSigningKey(
   return hmacSha256(kService, "aws4_request");
 }
 
-export interface PresignedPutOptions {
+export interface PresignedUrlOptions {
   /** Cloudflare account ID (found in dash.cloudflare.com). */
   accountId: string;
   /** R2 API token Access Key ID. */
@@ -82,11 +82,10 @@ export interface PresignedPutOptions {
   expiresIn?: number;
 }
 
-/**
- * Generate a presigned PUT URL for a Cloudflare R2 object.
- * The returned URL is valid for `expiresIn` seconds and allows a single PUT.
- */
-export async function createR2PresignedPutUrl(opts: PresignedPutOptions): Promise<string> {
+/** @deprecated Use PresignedUrlOptions */
+export type PresignedPutOptions = PresignedUrlOptions;
+
+async function createR2PresignedUrl(method: "PUT" | "GET", opts: PresignedUrlOptions): Promise<string> {
   const { accountId, accessKeyId, secretAccessKey, bucket, key, expiresIn = 900 } = opts;
 
   const region = "auto";
@@ -114,7 +113,7 @@ export async function createR2PresignedPutUrl(opts: PresignedPutOptions): Promis
     .join("&");
 
   const canonicalRequest = [
-    "PUT",
+    method,
     `/${bucket}/${encodeURIComponent(key).replace(/%2F/g, "/")}`,
     canonicalQueryString,
     `host:${host}\n`,
@@ -132,4 +131,21 @@ export async function createR2PresignedPutUrl(opts: PresignedPutOptions): Promis
     canonicalQueryString + `&X-Amz-Signature=${encodeURIComponent(signature)}`;
 
   return `https://${host}/${bucket}/${encodeURIComponent(key).replace(/%2F/g, "/")}?${finalQuery}`;
+}
+
+/**
+ * Generate a presigned PUT URL for direct browser → R2 upload.
+ * The browser can PUT the encrypted ciphertext without routing it through the Worker.
+ */
+export async function createR2PresignedPutUrl(opts: PresignedUrlOptions): Promise<string> {
+  return createR2PresignedUrl("PUT", opts);
+}
+
+/**
+ * Generate a presigned GET URL for direct browser ← R2 download.
+ * The browser can fetch the encrypted ciphertext without routing it through the Worker,
+ * keeping large blobs out of Worker memory entirely.
+ */
+export async function createR2PresignedGetUrl(opts: PresignedUrlOptions): Promise<string> {
+  return createR2PresignedUrl("GET", opts);
 }

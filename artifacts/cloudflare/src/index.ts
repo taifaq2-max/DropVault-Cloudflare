@@ -1,13 +1,16 @@
 /**
- * VaultDrop Cloudflare Worker — Hono-based API server.
+ * VaultDrop Cloudflare Worker — Hono entry point.
  *
- * Implements the same REST surface as the Express dev server plus two new
- * endpoints for the R2 direct-upload flow:
- *   POST /api/shares/upload-url  → issue a presigned R2 PUT URL
- *   POST /api/shares/confirm     → activate a share after direct upload
+ * This file handles HTTP plumbing (CORS, captcha, rate limiting, response
+ * serialisation). All business logic lives in framework-agnostic handler
+ * functions under src/handlers/ that accept a StorageAdapter and return typed
+ * result objects.
  *
- * Storage is backed by KV (metadata), R2 (encrypted blobs), and Durable Objects
- * (atomic access-once, nonce store, rate limiter).
+ * New endpoints over the Express dev server:
+ *   POST /api/shares/upload-url  — issue a presigned R2 PUT URL (420 MB path)
+ *   POST /api/shares/confirm     — activate a share after direct R2 upload
+ *
+ * Storage: KV (metadata) + R2 (encrypted blobs) + Durable Objects (atomicity).
  */
 
 import { Hono } from "hono";
@@ -17,71 +20,38 @@ import { CloudflareAdapter } from "./adapters/cloudflare.js";
 import { ShareAccessGate } from "./durableObjects/ShareAccessGate.js";
 import { NonceStore } from "./durableObjects/NonceStore.js";
 import { RateLimiter } from "./durableObjects/RateLimiter.js";
+import {
+  handleCreateShare,
+  handleUploadUrl,
+  handleConfirmUpload,
+  handlePeekShare,
+  handleAccessShare,
+  handleDeleteShare,
+  MAX_SHARE_BYTES,
+  MAX_FILES,
+} from "./handlers/shares.js";
+import { handleTestWebhook, fireWebhook } from "./handlers/webhook.js";
+import { handleHealth } from "./handlers/health.js";
 
 // ── Re-export Durable Object classes (required by wrangler) ──────────────────
 export { ShareAccessGate, NonceStore, RateLimiter };
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const HCAPTCHA_VERIFY_URL = "https://api.hcaptcha.com/siteverify";
-const NONCE_TTL_MS = 5 * 60 * 1000;
-
-/**
- * Maximum size for the inline KV path.
- * Larger payloads MUST use the upload-url / confirm flow.
- */
-const MAX_INLINE_BYTES = 4 * 1024 * 1024; // 4 MB
-
-/**
- * Maximum total share size (420 MB).
- * Enforced for both inline and R2 paths.
- */
-const MAX_SHARE_BYTES = 420 * 1024 * 1024;
-
-const MAX_FILES = 10;
-
-const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_CREATES = 10;
 const RATE_LIMIT_MAX_PEEKS = 30;
+const MAX_INLINE_BYTES = 4 * 1024 * 1024;
 
-const HUMOROUS_ERRORS = [
-  "We can't find what you're looking for",
-  "No droids here",
-  "There is no cake",
-  "This share has evaporated",
-  "The data has left the building",
-  "404: Share not found in this dimension",
-  "Whatever you're looking for, it isn't here",
-];
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-function randomHumorous(): string {
-  return HUMOROUS_ERRORS[Math.floor(Math.random() * HUMOROUS_ERRORS.length)] ?? "Not found";
+function getClientIp(req: Request): string {
+  const cfIp = req.headers.get("CF-Connecting-IP");
+  if (cfIp) return cfIp;
+  return req.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ?? "unknown";
 }
 
-// ── SSRF guard ───────────────────────────────────────────────────────────────
-const BLOCKED_HOST_PATTERNS = [
-  /^localhost$/i,
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2[0-9]|3[01])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^::1$/,
-  /^fc00:/i,
-  /^fe80:/i,
-  /metadata\.google\.internal$/i,
-  /metadata\.googleusercontent\.com$/i,
-];
-
-function isBlockedHost(hostname: string): boolean {
-  return BLOCKED_HOST_PATTERNS.some((p) => p.test(hostname));
-}
-
-// ── hCaptcha helper ──────────────────────────────────────────────────────────
-async function verifyCaptcha(
-  secretKey: string,
-  token: string,
-  ip: string
-): Promise<boolean> {
+async function verifyCaptcha(secretKey: string, token: string, ip: string): Promise<boolean> {
   const params = new URLSearchParams({ secret: secretKey, response: token, remoteip: ip });
   const res = await fetch(HCAPTCHA_VERIFY_URL, {
     method: "POST",
@@ -92,21 +62,69 @@ async function verifyCaptcha(
   return data.success === true;
 }
 
-// ── Client IP helper ─────────────────────────────────────────────────────────
-function getClientIp(req: Request, cf?: IncomingRequestCfProperties): string {
-  // Cloudflare always populates CF-Connecting-IP
-  const cfIp = req.headers.get("CF-Connecting-IP");
-  if (cfIp) return cfIp;
-  return req.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ?? "unknown";
+/**
+ * Parse JSON body from a Hono context. Returns null on parse error.
+ */
+async function parseBody(c: { req: { json: () => Promise<unknown> } }): Promise<Record<string, unknown> | null> {
+  try {
+    return (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
-// ── TTL validation ────────────────────────────────────────────────────────────
-const VALID_TTLS = new Set([300, 600, 1800, 3600, 14400, 86400, 604800]);
+/**
+ * Gate: check captcha (if enabled) and rate limit. Returns an error response
+ * or null if the request is allowed.
+ */
+async function gateCaptchaAndRateLimit(
+  c: Parameters<typeof cors>[0] extends never ? never : import("hono").Context<{ Bindings: Env }>,
+  adapter: CloudflareAdapter,
+  ip: string,
+  rateLimitKey: string,
+  maxHits: number,
+  captchaToken?: string
+): Promise<Response | null> {
+  const rl = await adapter.checkRateLimit(rateLimitKey, RATE_LIMIT_WINDOW_MS, maxHits);
+  if (!rl.allowed) {
+    return c.json(
+      {
+        error: "rate_limit_exceeded",
+        message: "We're busy right now. Please wait.",
+        retryAfterSeconds: rl.retryAfterSeconds,
+      },
+      429
+    );
+  }
+
+  if (c.env.HCAPTCHA_SECRET_KEY) {
+    if (!captchaToken) {
+      return c.json(
+        { error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." },
+        400
+      );
+    }
+    let captchaOk = false;
+    try {
+      captchaOk = await verifyCaptcha(c.env.HCAPTCHA_SECRET_KEY, captchaToken, ip);
+    } catch {
+      captchaOk = false;
+    }
+    if (!captchaOk) {
+      return c.json(
+        { error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." },
+        400
+      );
+    }
+  }
+
+  return null;
+}
 
 // ── Hono app ─────────────────────────────────────────────────────────────────
 const app = new Hono<{ Bindings: Env }>();
 
-// CORS — allow the configured frontend origin (or any origin when not set)
+// CORS — allow the configured frontend origin (or * when not set, dev-only).
 app.use("/api/*", async (c, next) => {
   const origin = c.env.FRONTEND_URL || "*";
   return cors({
@@ -119,230 +137,95 @@ app.use("/api/*", async (c, next) => {
 
 // ── Health ────────────────────────────────────────────────────────────────────
 app.get("/api/health", (c) => {
-  return c.json({
-    status: "ok",
+  const result = handleHealth({
     captchaEnabled: Boolean(c.env.HCAPTCHA_SECRET_KEY),
+    r2Enabled: Boolean(c.env.R2_ACCESS_KEY_ID && c.env.R2_ACCESS_KEY_SECRET),
     maxShareBytes: MAX_SHARE_BYTES,
     maxInlineBytes: MAX_INLINE_BYTES,
-    r2Enabled: Boolean(c.env.R2_ACCESS_KEY_ID && c.env.R2_ACCESS_KEY_SECRET),
   });
+  if (!result.ok) return c.json({ error: result.error, message: result.message }, result.status as 500);
+  return c.json(result.data, result.status as 200);
 });
 
-// ── POST /api/shares — create inline share (≤ MAX_INLINE_BYTES) ──────────────
+// ── POST /api/shares — inline share creation (≤ 4 MB) ───────────────────────
 app.post("/api/shares", async (c) => {
   const ip = getClientIp(c.req.raw);
   const adapter = new CloudflareAdapter(c.env);
+  const body = await parseBody(c);
+  if (!body) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
 
-  // Rate limit
-  const rl = await adapter.checkRateLimit(`create:${ip}`, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX_CREATES);
-  if (!rl.allowed) {
-    return c.json(
-      { error: "rate_limit_exceeded", message: "We're busy right now. Please wait.", retryAfterSeconds: rl.retryAfterSeconds },
-      429
-    );
-  }
+  const gate = await gateCaptchaAndRateLimit(
+    c, adapter, ip, `create:${ip}`, RATE_LIMIT_MAX_CREATES,
+    body["captchaToken"] as string | undefined
+  );
+  if (gate) return gate;
 
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
-  }
+  const result = await handleCreateShare(
+    {
+      encryptedData: (body["encryptedData"] as string) ?? "",
+      ttl: (body["ttl"] as number) ?? 0,
+      shareType: body["shareType"] as "text" | "files",
+      totalSize: (body["totalSize"] as number) ?? 0,
+      passwordHash: (body["passwordHash"] as string | null) ?? null,
+      passwordSalt: (body["passwordSalt"] as string | null) ?? null,
+      webhookUrl: (body["webhookUrl"] as string | null) ?? null,
+      webhookMessage: (body["webhookMessage"] as string | null) ?? null,
+      fileMetadata: (body["fileMetadata"] as null) ?? null,
+      captchaRequired: Boolean(c.env.HCAPTCHA_SECRET_KEY),
+    },
+    adapter
+  );
 
-  const b = body as Record<string, unknown>;
-
-  // hCaptcha
-  if (c.env.HCAPTCHA_SECRET_KEY) {
-    const token = b["captchaToken"];
-    if (!token || typeof token !== "string") {
-      return c.json({ error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." }, 400);
-    }
-    try {
-      const valid = await verifyCaptcha(c.env.HCAPTCHA_SECRET_KEY, token, ip);
-      if (!valid) {
-        return c.json({ error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." }, 400);
-      }
-    } catch {
-      return c.json({ error: "captcha_error", message: "CAPTCHA validation failed. Please try again." }, 400);
-    }
-  }
-
-  // Validate required fields
-  const encryptedData = b["encryptedData"];
-  const ttl = b["ttl"];
-  const shareType = b["shareType"];
-  const totalSize = b["totalSize"] ?? 0;
-  const passwordHash = b["passwordHash"] ?? null;
-  const passwordSalt = b["passwordSalt"] ?? null;
-  const webhookUrl = b["webhookUrl"] ?? null;
-  const webhookMessage = b["webhookMessage"] ?? null;
-  const fileMetadata = b["fileMetadata"] ?? null;
-
-  if (!encryptedData || typeof encryptedData !== "string") {
-    return c.json({ error: "validation_error", message: "encryptedData is required." }, 400);
-  }
-  if (!/^[A-Za-z0-9+/=_-]+$/.test(encryptedData)) {
-    return c.json({ error: "invalid_data", message: "encryptedData must be valid base64." }, 400);
-  }
-  if (typeof ttl !== "number" || !VALID_TTLS.has(ttl)) {
-    return c.json({ error: "validation_error", message: "Invalid TTL value." }, 400);
-  }
-  if (shareType !== "text" && shareType !== "files") {
-    return c.json({ error: "validation_error", message: "Invalid shareType." }, 400);
-  }
-  if (typeof totalSize !== "number" || totalSize < 0 || totalSize > MAX_SHARE_BYTES) {
-    return c.json({ error: "payload_too_large", message: `Total payload exceeds ${MAX_SHARE_BYTES} byte limit.` }, 413);
-  }
-  if (encryptedData.length > MAX_INLINE_BYTES * 1.5) {
-    return c.json(
-      { error: "payload_too_large", message: "Payload too large for inline path. Use the upload-url flow." },
-      413
-    );
-  }
-  if (Array.isArray(fileMetadata) && fileMetadata.length > MAX_FILES) {
-    return c.json({ error: "too_many_files", message: `Maximum ${MAX_FILES} files per share.` }, 400);
-  }
-
-  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
-
-  const shareId = await adapter.createShare({
-    encryptedData: encryptedData as string,
-    shareType: shareType as "text" | "files",
-    passwordHash: (passwordHash as string | null),
-    passwordSalt: (passwordSalt as string | null),
-    webhookUrl: (webhookUrl as string | null),
-    webhookMessage: (webhookMessage as string | null),
-    fileMetadata: (fileMetadata as null),
-    totalSize: totalSize as number,
-    ttl,
-    captchaRequired: Boolean(c.env.HCAPTCHA_SECRET_KEY),
-    expiresAt,
-  });
-
-  return c.json({ shareId, expiresAt }, 201);
+  if (!result.ok) return c.json({ error: result.error, message: result.message, ...result.extra }, result.status as 400 | 413);
+  return c.json(result.data, result.status as 201);
 });
 
-// ── POST /api/shares/upload-url — issue presigned R2 PUT URL ─────────────────
+// ── POST /api/shares/upload-url — presigned R2 PUT URL ───────────────────────
 app.post("/api/shares/upload-url", async (c) => {
   const ip = getClientIp(c.req.raw);
   const adapter = new CloudflareAdapter(c.env);
+  const body = await parseBody(c);
+  if (!body) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
 
-  // Rate limit (same bucket as share creation)
-  const rl = await adapter.checkRateLimit(`create:${ip}`, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX_CREATES);
-  if (!rl.allowed) {
-    return c.json(
-      { error: "rate_limit_exceeded", message: "We're busy right now. Please wait.", retryAfterSeconds: rl.retryAfterSeconds },
-      429
-    );
-  }
+  const gate = await gateCaptchaAndRateLimit(
+    c, adapter, ip, `create:${ip}`, RATE_LIMIT_MAX_CREATES,
+    body["captchaToken"] as string | undefined
+  );
+  if (gate) return gate;
 
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
-  }
+  const result = await handleUploadUrl(
+    {
+      ttl: (body["ttl"] as number) ?? 0,
+      shareType: body["shareType"] as "text" | "files",
+      totalSize: (body["totalSize"] as number) ?? 0,
+      passwordHash: (body["passwordHash"] as string | null) ?? null,
+      passwordSalt: (body["passwordSalt"] as string | null) ?? null,
+      webhookUrl: (body["webhookUrl"] as string | null) ?? null,
+      webhookMessage: (body["webhookMessage"] as string | null) ?? null,
+      fileMetadata: (body["fileMetadata"] as null) ?? null,
+      captchaRequired: Boolean(c.env.HCAPTCHA_SECRET_KEY),
+    },
+    adapter
+  );
 
-  const b = body as Record<string, unknown>;
-
-  // hCaptcha
-  if (c.env.HCAPTCHA_SECRET_KEY) {
-    const token = b["captchaToken"];
-    if (!token || typeof token !== "string") {
-      return c.json({ error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." }, 400);
-    }
-    try {
-      const valid = await verifyCaptcha(c.env.HCAPTCHA_SECRET_KEY, token, ip);
-      if (!valid) {
-        return c.json({ error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." }, 400);
-      }
-    } catch {
-      return c.json({ error: "captcha_error", message: "CAPTCHA validation failed. Please try again." }, 400);
-    }
-  }
-
-  const ttl = b["ttl"];
-  const shareType = b["shareType"];
-  const totalSize = b["totalSize"] ?? 0;
-  const passwordHash = (b["passwordHash"] ?? null) as string | null;
-  const passwordSalt = (b["passwordSalt"] ?? null) as string | null;
-  const webhookUrl = (b["webhookUrl"] ?? null) as string | null;
-  const webhookMessage = (b["webhookMessage"] ?? null) as string | null;
-  const fileMetadata = (b["fileMetadata"] ?? null) as null;
-
-  if (typeof ttl !== "number" || !VALID_TTLS.has(ttl)) {
-    return c.json({ error: "validation_error", message: "Invalid TTL value." }, 400);
-  }
-  if (shareType !== "text" && shareType !== "files") {
-    return c.json({ error: "validation_error", message: "Invalid shareType." }, 400);
-  }
-  if (typeof totalSize !== "number" || totalSize < 0 || totalSize > MAX_SHARE_BYTES) {
-    return c.json({ error: "payload_too_large", message: `Total payload exceeds ${MAX_SHARE_BYTES} byte limit.` }, 413);
-  }
-
-  // Generate a unique share ID and R2 object key
-  const pendingShareId = crypto.randomUUID();
-  const r2Key = `shares/${pendingShareId}`;
-  const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
-
-  const pending = {
-    shareId: pendingShareId,
-    r2Key,
-    ttl,
-    shareType: shareType as "text" | "files",
-    passwordHash,
-    passwordSalt,
-    webhookUrl,
-    webhookMessage,
-    fileMetadata,
-    totalSize: totalSize as number,
-    captchaRequired: Boolean(c.env.HCAPTCHA_SECRET_KEY),
-    expiresAt,
-  };
-
-  const uploadUrl = await adapter.createPendingUpload(pending);
-
-  if (!uploadUrl) {
-    return c.json(
-      { error: "r2_not_configured", message: "R2 direct-upload is not configured on this deployment." },
-      501
-    );
-  }
-
-  return c.json({ shareId: pendingShareId, uploadUrl, expiresAt }, 200);
+  if (!result.ok) return c.json({ error: result.error, message: result.message }, result.status as 400 | 413 | 501);
+  return c.json(result.data, result.status as 200);
 });
 
-// ── POST /api/shares/confirm — activate share after direct R2 upload ─────────
+// ── POST /api/shares/confirm — activate share after R2 upload ────────────────
 app.post("/api/shares/confirm", async (c) => {
-  const ip = getClientIp(c.req.raw);
   const adapter = new CloudflareAdapter(c.env);
+  const body = await parseBody(c);
+  if (!body) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
 
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
-  }
-
-  const b = body as Record<string, unknown>;
-  const pendingShareId = b["shareId"];
+  const pendingShareId = body["shareId"];
   if (!pendingShareId || typeof pendingShareId !== "string") {
     return c.json({ error: "validation_error", message: "shareId is required." }, 400);
   }
 
-  const realShareId = await adapter.confirmPendingUpload(pendingShareId);
-  if (!realShareId) {
-    return c.json(
-      { error: "not_found", message: "Pending upload not found or R2 object missing. Upload may have failed." },
-      404
-    );
-  }
-
-  // Get the expiresAt from the newly created share
-  const result = await adapter.getShare(realShareId);
-  const expiresAt = result.found && !result.accessed ? result.share.expiresAt : new Date().toISOString();
-
-  return c.json({ shareId: realShareId, expiresAt }, 201);
+  const result = await handleConfirmUpload(pendingShareId, adapter);
+  if (!result.ok) return c.json({ error: result.error, message: result.message }, result.status as 404);
+  return c.json(result.data, result.status as 201);
 });
 
 // ── GET /api/shares/:shareId/peek ─────────────────────────────────────────────
@@ -351,144 +234,54 @@ app.get("/api/shares/:shareId/peek", async (c) => {
   const ip = getClientIp(c.req.raw);
   const adapter = new CloudflareAdapter(c.env);
 
-  // Rate limit peeks
-  const rl = await adapter.checkRateLimit(`peek:${ip}`, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX_PEEKS);
-  if (!rl.allowed) {
-    c.header("Retry-After", String(rl.retryAfterSeconds));
+  const rlGate = await adapter.checkRateLimit(`peek:${ip}`, RATE_LIMIT_WINDOW_MS, RATE_LIMIT_MAX_PEEKS);
+  if (!rlGate.allowed) {
+    c.header("Retry-After", String(rlGate.retryAfterSeconds));
     return c.json(
-      { error: "rate_limit_exceeded", message: "Too many requests. Please wait before trying again.", retryAfterSeconds: rl.retryAfterSeconds },
+      { error: "rate_limit_exceeded", message: "Too many requests. Please wait.", retryAfterSeconds: rlGate.retryAfterSeconds },
       429
     );
   }
 
-  // hCaptcha
   if (c.env.HCAPTCHA_SECRET_KEY) {
     const token = c.req.query("captchaToken");
-    if (!token) {
-      return c.json({ error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." }, 400);
-    }
-    try {
-      const valid = await verifyCaptcha(c.env.HCAPTCHA_SECRET_KEY, token, ip);
-      if (!valid) {
-        return c.json({ error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." }, 400);
-      }
-    } catch {
-      return c.json({ error: "captcha_error", message: "CAPTCHA validation failed. Please try again." }, 400);
-    }
+    if (!token) return c.json({ error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." }, 400);
+    let ok = false;
+    try { ok = await verifyCaptcha(c.env.HCAPTCHA_SECRET_KEY, token, ip); } catch { ok = false; }
+    if (!ok) return c.json({ error: "captcha_failed", message: "CAPTCHA validation failed. Please try again." }, 400);
   }
 
-  const result = await adapter.getShare(shareId);
+  const result = await handlePeekShare(shareId, ip, Boolean(c.env.HCAPTCHA_SECRET_KEY), adapter);
 
-  if (!result.found) {
-    return c.json({ error: "not_found", message: "Share not found or expired", humorousMessage: randomHumorous() }, 404);
-  }
-  if (result.accessed) {
-    return c.json({ error: "already_accessed", message: "Share already accessed", humorousMessage: "There is no cake" }, 410);
-  }
-
-  const { share } = result;
-
-  // Check wall-clock expiry (belt-and-suspenders alongside KV TTL)
-  if (Date.now() > new Date(share.expiresAt).getTime()) {
-    await adapter.deleteShare(shareId);
-    return c.json({ error: "expired", message: "Share has expired", humorousMessage: "No droids here" }, 410);
-  }
-
-  // Issue access nonce when captcha is enabled
-  let accessNonce: string | undefined;
-  if (c.env.HCAPTCHA_SECRET_KEY) {
-    accessNonce = await adapter.issueNonce(shareId, ip);
-  }
-
-  return c.json({
-    totalSize: share.totalSize,
-    passwordRequired: share.passwordHash !== null,
-    shareType: share.shareType,
-    fileCount: share.fileMetadata?.length ?? 0,
-    expiresAt: share.expiresAt,
-    ...(accessNonce !== undefined ? { accessNonce } : {}),
-  });
+  if (!result.ok) return c.json({ error: result.error, message: result.message, ...result.extra }, result.status as 404 | 410);
+  return c.json(result.data, result.status as 200);
 });
 
-// ── GET /api/shares/:shareId — access and consume share ──────────────────────
+// ── GET /api/shares/:shareId — access and consume ────────────────────────────
 app.get("/api/shares/:shareId", async (c) => {
   const shareId = c.req.param("shareId");
   const ip = getClientIp(c.req.raw);
   const adapter = new CloudflareAdapter(c.env);
+  const nonce = c.req.query("accessNonce");
 
-  // Validate nonce when captcha is enabled
-  if (c.env.HCAPTCHA_SECRET_KEY) {
-    const nonce = c.req.query("accessNonce");
-    if (!nonce) {
-      return c.json({ error: "invalid_nonce", message: "Access denied. Please return to the share link and try again." }, 403);
-    }
-    const valid = await adapter.validateNonce(nonce, shareId);
-    if (!valid) {
-      return c.json({ error: "invalid_nonce", message: "Access denied. Please return to the share link and try again." }, 403);
-    }
-  }
+  const result = await handleAccessShare(shareId, ip, nonce, Boolean(c.env.HCAPTCHA_SECRET_KEY), adapter);
 
-  const result = await adapter.accessShare(shareId);
-
-  if (!result.ok) {
-    if (result.reason === "not_found") {
-      return c.json({ error: "not_found", message: "Share not found or expired", humorousMessage: randomHumorous() }, 404);
-    }
-    if (result.reason === "already_accessed") {
-      return c.json({ error: "already_accessed", message: "Share has already been accessed", humorousMessage: "There is no cake" }, 410);
-    }
-    if (result.reason === "expired") {
-      return c.json({ error: "expired", message: "Share has expired", humorousMessage: "No droids here" }, 410);
-    }
-  }
-
-  const { share } = result as { ok: true; share: import("./adapters/types.js").ShareMeta };
-
-  // Fire webhook asynchronously (fire-and-forget)
-  if (share.webhookUrl) {
-    c.executionCtx.waitUntil(
-      fetch(share.webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: share.webhookMessage ?? "your submission has been downloaded",
-          timestamp: new Date().toISOString(),
-        }),
-      }).catch(() => {})
-    );
-  }
-
-  // Clean up R2 blob after serving (fire-and-forget)
-  if (share.r2Key) {
-    c.executionCtx.waitUntil(
-      c.env.SHARE_R2.delete(share.r2Key).catch(() => {})
-    );
-  }
-
-  return c.json({
-    encryptedData: share.encryptedData,
-    fileMetadata: share.fileMetadata,
-    passwordRequired: share.passwordHash !== null,
-    passwordSalt: share.passwordSalt,
-    shareType: share.shareType,
-    totalSize: share.totalSize,
-    webhookUrl: share.webhookUrl,
-    webhookMessage: share.webhookMessage,
-  });
+  if (!result.ok) return c.json({ error: result.error, message: result.message, ...result.extra }, result.status as 403 | 404 | 410);
+  return c.json(result.data, result.status as 200);
 });
 
-// ── DELETE /api/shares/:shareId ───────────────────────────────────────────────
+// ── DELETE /api/shares/:shareId — delete (fires webhook = "download complete") ─
 app.delete("/api/shares/:shareId", async (c) => {
   const shareId = c.req.param("shareId");
   const adapter = new CloudflareAdapter(c.env);
 
-  const result = await adapter.getShare(shareId);
-  if (!result.found) {
-    return c.json({ error: "not_found", message: "Share not found" }, 404);
-  }
+  const result = await handleDeleteShare(shareId, adapter, async (url, message) => {
+    // Use waitUntil so the webhook doesn't block the response.
+    c.executionCtx.waitUntil(fireWebhook(url, message));
+  });
 
-  await adapter.deleteShare(shareId);
-  return c.json({ success: true, message: "Share deleted successfully" });
+  if (!result.ok) return c.json({ error: result.error, message: result.message }, result.status as 404);
+  return c.json(result.data, result.status as 200);
 });
 
 // ── POST /api/webhook/test ─────────────────────────────────────────────────────
@@ -504,53 +297,12 @@ app.post("/api/webhook/test", async (c) => {
     );
   }
 
-  let body: unknown;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
-  }
+  const body = await parseBody(c);
+  if (!body) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
 
-  const b = body as Record<string, unknown>;
-  const webhookUrl = b["webhookUrl"];
-
-  if (!webhookUrl || typeof webhookUrl !== "string") {
-    return c.json({ error: "validation_error", message: "Invalid request body." }, 400);
-  }
-
-  let url: URL;
-  try {
-    url = new URL(webhookUrl);
-  } catch {
-    return c.json({ error: "invalid_url", message: "Invalid webhook URL format." }, 400);
-  }
-
-  if (url.protocol !== "https:") {
-    return c.json({ error: "invalid_url", message: "Webhook URL must use HTTPS." }, 400);
-  }
-
-  if (isBlockedHost(url.hostname)) {
-    return c.json({ error: "invalid_url", message: "Webhook URL must point to a public host." }, 400);
-  }
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    const response = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: "VaultDrop webhook test", timestamp: new Date().toISOString() }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    return c.json({ success: true, statusCode: response.status, message: `Webhook responded with status ${response.status}` });
-  } catch (err) {
-    return c.json({
-      success: false,
-      statusCode: null,
-      message: err instanceof Error ? err.message : "Webhook test failed",
-    });
-  }
+  const result = await handleTestWebhook(body["webhookUrl"], adapter);
+  if (!result.ok) return c.json({ error: result.error, message: result.message }, result.status as 400);
+  return c.json(result.data, result.status as 200);
 });
 
 // ── 404 catch-all ─────────────────────────────────────────────────────────────

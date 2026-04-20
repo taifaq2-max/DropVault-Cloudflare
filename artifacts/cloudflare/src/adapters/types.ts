@@ -6,8 +6,19 @@
 
 export interface ShareMeta {
   id: string;
+  /**
+   * Inline ciphertext (base64) — present for shares created via the KV inline path.
+   * Null for R2-backed shares; use `dataUrl` instead.
+   */
   encryptedData?: string | null;
+  /** R2 object key — present for shares created via the R2 upload-url path. */
   r2Key?: string | null;
+  /**
+   * Presigned R2 GET URL — populated by the adapter when serving an R2-backed share.
+   * The receiver fetches ciphertext directly from this URL (no Worker memory usage).
+   * Not persisted to storage; generated per-request.
+   */
+  dataUrl?: string | null;
   shareType: "text" | "files";
   passwordHash: string | null;
   passwordSalt: string | null;
@@ -102,9 +113,17 @@ export interface StorageAdapter {
   /** Confirm a pending upload and create the real share. Returns shareId or null on error. */
   confirmPendingUpload(shareId: string): Promise<string | null>;
 
-  /** Issue an HMAC-based access nonce for a share. */
+  /**
+   * Issue an HMAC-based access nonce bound to the given shareId and client IP.
+   * The nonce embeds the IP in the HMAC payload so it cannot be used from
+   * a different IP address (prevents cross-client nonce theft).
+   */
   issueNonce(shareId: string, ip: string): Promise<string>;
 
-  /** Validate and revoke a nonce. */
-  validateNonce(nonce: string, shareId: string): Promise<boolean>;
+  /**
+   * Validate and atomically revoke a nonce.
+   * Must verify the HMAC signature (binding nonce to shareId + ip + ts) and
+   * ensure the nonce has not already been consumed (single-use guarantee).
+   */
+  validateNonce(nonce: string, shareId: string, ip: string): Promise<boolean>;
 }

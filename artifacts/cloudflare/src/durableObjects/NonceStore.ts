@@ -1,20 +1,20 @@
 /**
- * NonceStore — Durable Object for HMAC-SHA256 nonce issuance and revocation.
+ * NonceStore — Durable Object for single-use nonce revocation.
  *
- * Nonces prevent replay of the captcha-bypass trick: each peek issues a
- * short-lived (5-minute) nonce; the access endpoint validates and immediately
- * revokes it. Revocation is handled inside the DO to avoid KV race conditions.
+ * The Worker issues HMAC-SHA256 nonces (bound to shareId + IP + timestamp).
+ * This DO serves as the distributed revocation registry: once a nonce is
+ * consumed by the access endpoint, it is recorded here so that no other
+ * Worker instance can replay it within its TTL window.
  *
- * State per-instance (one DO per deployment, not per share):
- *   nonce:{nonce} → { shareId, expiresAt }
+ * The DO does NOT issue nonces — that's done by CloudflareAdapter using
+ * the SESSION_SECRET, which keeps nonce generation stateless (no storage write
+ * on every peek, only on every access).
  *
- * Cleanup of expired entries happens lazily during get/revoke.
+ * State:
+ *   used:{nonce} → expiresAt (unix ms)
+ *
+ * Cleanup of expired entries happens lazily on each revoke call.
  */
-
-interface NonceEntry {
-  shareId: string;
-  expiresAt: number; // unix ms
-}
 
 export class NonceStore {
   private state: DurableObjectState;
@@ -28,49 +28,62 @@ export class NonceStore {
     const url = new URL(request.url);
     const action = url.pathname.slice(1);
 
-    if (request.method === "POST" && action === "issue") {
-      return this.handleIssue(request);
+    if (request.method === "POST" && action === "revoke") {
+      return this.handleRevoke(request);
     }
-    if (request.method === "POST" && action === "validate") {
-      return this.handleValidate(request);
+    if (request.method === "POST" && action === "is-consumed") {
+      return this.handleIsConsumed(request);
     }
     return new Response("Not found", { status: 404 });
   }
 
-  /** Issue a new nonce for shareId. Returns { nonce }. */
-  private async handleIssue(request: Request): Promise<Response> {
-    const { shareId } = (await request.json()) as { shareId: string };
-    const nonce = crypto.randomUUID();
-    const expiresAt = Date.now() + this.TTL_MS;
-    await this.state.storage.put<NonceEntry>(`nonce:${nonce}`, { shareId, expiresAt });
-    return Response.json({ nonce, expiresAt });
-  }
-
   /**
-   * Validate-and-revoke a nonce.
-   * Returns { valid: true, shareId } or { valid: false }.
-   * Uses blockConcurrencyWhile for atomicity.
+   * Atomically check if a nonce is already consumed; if not, consume it.
+   * Returns { consumed: false } if the nonce was free and is now marked.
+   * Returns { consumed: true }  if the nonce was already consumed.
+   *
+   * This is the primary safe-consume operation — callers should use this
+   * rather than separate check + revoke calls.
    */
-  private async handleValidate(request: Request): Promise<Response> {
-    const { nonce, shareId } = (await request.json()) as { nonce: string; shareId: string };
-    const key = `nonce:${nonce}`;
+  private async handleRevoke(request: Request): Promise<Response> {
+    const { nonce, expiresAt } = (await request.json()) as {
+      nonce: string;
+      expiresAt: number;
+    };
+    const key = `used:${nonce}`;
 
-    let result: { valid: boolean; shareId?: string } = { valid: false };
+    let alreadyConsumed = false;
 
     await this.state.blockConcurrencyWhile(async () => {
-      const entry = await this.state.storage.get<NonceEntry>(key);
-      if (!entry) return;
-      if (entry.expiresAt < Date.now()) {
-        await this.state.storage.delete(key);
+      // Lazy cleanup: remove all expired entries while we have the lock
+      const all = await this.state.storage.list<number>({ prefix: "used:" });
+      const now = Date.now();
+      const toDelete: string[] = [];
+      for (const [k, exp] of all) {
+        if (exp < now) toDelete.push(k);
+      }
+      if (toDelete.length > 0) {
+        await this.state.storage.delete(toDelete);
+      }
+
+      const existing = await this.state.storage.get<number>(key);
+      if (existing !== undefined) {
+        alreadyConsumed = true;
         return;
       }
-      if (entry.shareId !== shareId) return;
 
-      // Valid — revoke immediately
-      await this.state.storage.delete(key);
-      result = { valid: true, shareId: entry.shareId };
+      await this.state.storage.put(key, expiresAt);
     });
 
-    return Response.json(result);
+    return Response.json({ consumed: alreadyConsumed });
+  }
+
+  /** Check without consuming — used for read-only inspection. */
+  private async handleIsConsumed(request: Request): Promise<Response> {
+    const { nonce } = (await request.json()) as { nonce: string };
+    const key = `used:${nonce}`;
+    const entry = await this.state.storage.get<number>(key);
+    const consumed = entry !== undefined && entry > Date.now();
+    return Response.json({ consumed });
   }
 }
