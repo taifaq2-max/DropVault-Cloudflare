@@ -29,6 +29,7 @@ type Phase =
   | "done"
   | "nonce_expired"
   | "share_expired"
+  | "share_consumed"
   | "error";
 
 interface FileDownloadState {
@@ -251,11 +252,12 @@ export default function ReceiverPage() {
         setPhase("nonce_expired");
         return;
       }
-      if (
-        (anyErr?.status === 404 && anyErr?.data?.error === "not_found") ||
-        (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed")
-      ) {
+      if (anyErr?.status === 404 && anyErr?.data?.error === "not_found") {
         setPhase("share_expired");
+        return;
+      }
+      if (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed") {
+        setPhase("share_consumed");
         return;
       }
       setErrorMessage(
@@ -686,6 +688,22 @@ export default function ReceiverPage() {
                 <p className="text-muted-foreground font-mono text-sm max-w-sm mx-auto">
                   This share has expired and can no longer be accessed.
                   Ask the sender to create a new share.
+                </p>
+              </div>
+              <Button variant="outline" onClick={() => navigate("/")} className="font-mono" aria-label="Go home and create a new share">
+                Create a Share
+              </Button>
+            </motion.div>
+          )}
+
+          {/* Share consumed — someone already accessed this share (410 already_accessed) */}
+          {phase === "share_consumed" && (
+            <motion.div key="share_consumed" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center space-y-6 py-8">
+              <div className="text-6xl" role="img" aria-label="Warning mascot">⚠️</div>
+              <div className="space-y-3">
+                <div className="font-mono font-bold text-xl">This share was already accessed</div>
+                <p className="text-muted-foreground font-mono text-sm max-w-sm mx-auto">
+                  Someone else has already opened this share. If you did not access it, the sender should be notified — the data may have been intercepted.
                 </p>
               </div>
               <Button variant="outline" onClick={() => navigate("/")} className="font-mono" aria-label="Go home and create a new share">
