@@ -28,6 +28,7 @@ type Phase =
   | "content"
   | "done"
   | "nonce_expired"
+  | "share_expired"
   | "error";
 
 interface FileDownloadState {
@@ -142,7 +143,11 @@ export default function ReceiverPage() {
         setPhase("warning");
       })
       .catch((err: unknown) => {
-        const anyErr = err as { data?: { humorousMessage?: string; message?: string } };
+        const anyErr = err as { status?: number; data?: { error?: string; humorousMessage?: string; message?: string } };
+        if (anyErr?.status === 404 && anyErr?.data?.error === "not_found") {
+          setPhase("share_expired");
+          return;
+        }
         setErrorMessage(
           anyErr?.data?.humorousMessage ??
             anyErr?.data?.message ??
@@ -167,10 +172,12 @@ export default function ReceiverPage() {
     } catch (err: unknown) {
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
-      const anyErr = err as { data?: { error?: string; humorousMessage?: string; message?: string } };
+      const anyErr = err as { status?: number; data?: { error?: string; humorousMessage?: string; message?: string } };
       if (anyErr?.data?.error === "captcha_failed") {
         // Stay on the captcha screen — show a retry message instead of the error page
         setCaptchaGateError("Verification failed. Please complete the captcha again.");
+      } else if (anyErr?.status === 404 && anyErr?.data?.error === "not_found") {
+        setPhase("share_expired");
       } else {
         setErrorMessage(
           anyErr?.data?.humorousMessage ??
@@ -233,6 +240,13 @@ export default function ReceiverPage() {
       const anyErr = err as { status?: number; data?: { error?: string; humorousMessage?: string; message?: string } };
       if (anyErr?.status === 403 && anyErr?.data?.error === "invalid_nonce") {
         setPhase("nonce_expired");
+        return;
+      }
+      if (
+        (anyErr?.status === 404 && anyErr?.data?.error === "not_found") ||
+        (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed")
+      ) {
+        setPhase("share_expired");
         return;
       }
       setErrorMessage(
@@ -629,6 +643,23 @@ export default function ReceiverPage() {
                 <div className="text-xs text-muted-foreground font-mono">Thank you for using VaultDrop.</div>
               </div>
               <Button variant="outline" onClick={() => navigate("/")} className="font-mono" aria-label="Create a new share">
+                Create a Share
+              </Button>
+            </motion.div>
+          )}
+
+          {/* Share expired — the share's own TTL ran out (404/410) */}
+          {phase === "share_expired" && (
+            <motion.div key="share_expired" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="text-center space-y-6 py-8">
+              <div className="text-6xl" role="img" aria-label="Dog mascot">🐕</div>
+              <div className="space-y-3">
+                <div className="font-mono font-bold text-xl">This share has expired</div>
+                <p className="text-muted-foreground font-mono text-sm max-w-sm mx-auto">
+                  This share has expired and can no longer be accessed.
+                  Ask the sender to create a new share.
+                </p>
+              </div>
+              <Button variant="outline" onClick={() => navigate("/")} className="font-mono" aria-label="Go home and create a new share">
                 Create a Share
               </Button>
             </motion.div>
