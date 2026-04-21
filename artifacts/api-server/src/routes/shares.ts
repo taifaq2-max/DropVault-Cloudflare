@@ -17,6 +17,25 @@ import {
   TestWebhookBody,
 } from "@workspace/api-zod";
 
+/**
+ * Validate `body` against a Zod schema. Returns the parsed data on success, or
+ * an object with `error`/`message` ready for a 400 response on failure.
+ * Mirrors the zodValidate helper in the Cloudflare Worker.
+ */
+function zodValidate<T>(
+  schema: { safeParse: (v: unknown) => { success: true; data: T } | { success: false; error: { errors: Array<{ path: (string | number)[]; message: string }> } } },
+  body: unknown
+): { ok: true; data: T } | { ok: false; error: string; message: string } {
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    const message = result.error.errors
+      .map((e) => (e.path.length > 0 ? `${e.path.join(".")}: ${e.message}` : e.message))
+      .join("; ");
+    return { ok: false, error: "validation_error", message };
+  }
+  return { ok: true, data: result.data };
+}
+
 const router: IRouter = Router();
 
 const HCAPTCHA_SECRET = process.env.HCAPTCHA_SECRET_KEY ?? "";
@@ -169,18 +188,13 @@ router.post("/shares", async (req: Request, res: Response) => {
     }
   }
 
-  const parsed = CreateShareBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({
-      error: "validation_error",
-      message: parsed.error.issues
-        .map((issue: { message: string }) => issue.message)
-        .join(", "),
-    });
+  const validated = zodValidate(CreateShareBody, req.body);
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error, message: validated.message });
     return;
   }
 
-  const body = parsed.data;
+  const body = validated.data;
 
   if (body.totalSize > MAX_SHARE_SIZE_BYTES) {
     res.status(413).json({
@@ -469,16 +483,13 @@ router.post("/webhook/test", async (req: Request, res: Response) => {
     return;
   }
 
-  const parsed = TestWebhookBody.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({
-      error: "validation_error",
-      message: "Invalid request body",
-    });
+  const validated = zodValidate(TestWebhookBody, req.body);
+  if (!validated.ok) {
+    res.status(400).json({ error: validated.error, message: validated.message });
     return;
   }
 
-  const { webhookUrl } = parsed.data;
+  const { webhookUrl } = validated.data;
 
   // Validate URL
   let url: URL;
