@@ -369,8 +369,6 @@ export default function SenderPage() {
       return;
     }
 
-    let encryptRafId = 0;
-
     try {
       // Build payload
       let payload: SharePayload;
@@ -410,25 +408,18 @@ export default function SenderPage() {
         payload = { type: "files", files: fileData };
       }
 
-      // ── Encrypting phase: heuristic animation covering AES-GCM ─────────
+      // ── Encrypting phase: real chunked AES-GCM with accurate progress ──
       setUploadPhase("encrypting");
       setEncryptProgress(0);
-      // Estimate AES-GCM duration at ~200 MB/s on the plaintext; 200 ms floor
-      const estimatedEncryptMs = Math.max(200, (totalSize / (200 * 1024 * 1024)) * 1000);
-      const encryptStart = Date.now();
-      const animateEncrypt = () => {
-        const elapsed = Date.now() - encryptStart;
-        const ratio = Math.min(0.95, elapsed / estimatedEncryptMs);
-        setEncryptProgress(Math.round(ratio * 100));
-        if (ratio < 0.95) {
-          encryptRafId = requestAnimationFrame(animateEncrypt);
-        }
-      };
-      encryptRafId = requestAnimationFrame(animateEncrypt);
 
       const { key, rawKey, keyBase64Url } = await generateEncryptionKey();
-      const encryptedData = await encryptPayload(payload, key);
-      cancelAnimationFrame(encryptRafId);
+      const encryptedData = await encryptPayload(
+        payload,
+        key,
+        (bytesEncrypted, totalBytes) => {
+          setEncryptProgress(Math.round((bytesEncrypted / totalBytes) * 100));
+        }
+      );
       setEncryptProgress(100);
       // Brief pause so users can see the completed encryption step
       await new Promise<void>((r) => setTimeout(r, 150));
@@ -522,7 +513,6 @@ export default function SenderPage() {
           });
         } catch (r2Err) {
           // XHR PUT failed — keep r2RetryContext so "Retry Upload" button is shown.
-          cancelAnimationFrame(encryptRafId);
           captchaRef.current?.resetCaptcha();
           setCaptchaToken("");
           setUploadPhase(null);
@@ -566,7 +556,6 @@ export default function SenderPage() {
       setExpiresAt(result.expiresAt);
       setShareCreated(true);
     } catch (err: unknown) {
-      cancelAnimationFrame(encryptRafId);
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       setUploadPhase(null);

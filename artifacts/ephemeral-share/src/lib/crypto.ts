@@ -73,26 +73,69 @@ export async function generateEncryptionKey(): Promise<{
   };
 }
 
+// Magic bytes that identify the chunked format: "CHKD"
+const CHUNKED_MAGIC = new Uint8Array([0x43, 0x48, 0x4b, 0x44]);
+const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB per chunk
+
+// Encrypt payload in fixed-size chunks so that onProgress reflects real work.
+// Each chunk is encrypted with its own random IV.
+//
+// Wire format (base64-encoded):
+//   [4 bytes magic "CHKD"] [4 bytes uint32 numChunks big-endian]
+//   for each chunk:
+//     [4 bytes uint32 ciphertextLen big-endian] [12 bytes IV] [ciphertextLen bytes ciphertext]
 export async function encryptPayload(
   payload: SharePayload,
-  key: CryptoKey
+  key: CryptoKey,
+  onProgress?: (bytesEncrypted: number, totalBytes: number) => void
 ): Promise<string> {
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
-  const iv = new Uint8Array(12);
-  crypto.getRandomValues(iv);
+  const totalBytes = plaintext.byteLength;
 
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    plaintext
-  );
+  const numChunks = Math.max(1, Math.ceil(totalBytes / CHUNK_SIZE));
+  const encryptedChunks: Uint8Array[] = [];
+  let bytesEncrypted = 0;
 
-  // Combine IV + ciphertext
-  const combined = new Uint8Array(12 + ciphertext.byteLength);
-  combined.set(iv, 0);
-  combined.set(new Uint8Array(ciphertext), 12);
+  for (let i = 0; i < numChunks; i++) {
+    const start = i * CHUNK_SIZE;
+    const end = Math.min(start + CHUNK_SIZE, totalBytes);
+    const chunk = plaintext.slice(start, end);
 
-  return bufferToBase64(combined.buffer);
+    const iv = new Uint8Array(12);
+    crypto.getRandomValues(iv);
+
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      chunk
+    );
+
+    // Layout per chunk: 4-byte ciphertextLen + 12-byte IV + ciphertext
+    const chunkBytes = new Uint8Array(4 + 12 + ciphertext.byteLength);
+    const lenView = new DataView(chunkBytes.buffer);
+    lenView.setUint32(0, ciphertext.byteLength, false);
+    chunkBytes.set(iv, 4);
+    chunkBytes.set(new Uint8Array(ciphertext), 16);
+    encryptedChunks.push(chunkBytes);
+
+    bytesEncrypted = end;
+    onProgress?.(bytesEncrypted, totalBytes);
+  }
+
+  // Build final buffer: magic(4) + numChunks(4) + all chunk data
+  const totalSize =
+    4 + 4 + encryptedChunks.reduce((s, c) => s + c.byteLength, 0);
+  const result = new Uint8Array(totalSize);
+  result.set(CHUNKED_MAGIC, 0);
+  const resultView = new DataView(result.buffer);
+  resultView.setUint32(4, numChunks, false);
+  let offset = 8;
+  for (const chunkBytes of encryptedChunks) {
+    result.set(chunkBytes, offset);
+    offset += chunkBytes.byteLength;
+  }
+
+  return bufferToBase64(result.buffer);
 }
 
 export async function decryptPayload(
@@ -100,6 +143,61 @@ export async function decryptPayload(
   key: CryptoKey
 ): Promise<SharePayload> {
   const combined = new Uint8Array(base64ToBuffer(encryptedDataBase64));
+
+  // Detect chunked format by magic header "CHKD"
+  if (
+    combined.length >= 8 &&
+    combined[0] === 0x43 &&
+    combined[1] === 0x48 &&
+    combined[2] === 0x4b &&
+    combined[3] === 0x44
+  ) {
+    const view = new DataView(
+      combined.buffer,
+      combined.byteOffset,
+      combined.byteLength
+    );
+    const numChunks = view.getUint32(4, false);
+    if (numChunks === 0 || numChunks > 100_000) {
+      throw new Error("Decryption failed: invalid chunk count in payload.");
+    }
+    let offset = 8;
+    const plaintextParts: Uint8Array[] = [];
+
+    for (let i = 0; i < numChunks; i++) {
+      if (offset + 4 > combined.length) {
+        throw new Error("Decryption failed: payload is truncated (missing chunk length).");
+      }
+      const ciphertextLen = view.getUint32(offset, false);
+      offset += 4;
+      if (offset + 12 + ciphertextLen > combined.length) {
+        throw new Error("Decryption failed: payload is truncated (missing chunk data).");
+      }
+      const iv = combined.slice(offset, offset + 12);
+      offset += 12;
+      const ciphertext = combined.slice(offset, offset + ciphertextLen);
+      offset += ciphertextLen;
+
+      const plaintext = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv },
+        key,
+        ciphertext
+      );
+      plaintextParts.push(new Uint8Array(plaintext));
+    }
+
+    const totalLength = plaintextParts.reduce((s, p) => s + p.byteLength, 0);
+    const fullPlaintext = new Uint8Array(totalLength);
+    let pos = 0;
+    for (const part of plaintextParts) {
+      fullPlaintext.set(part, pos);
+      pos += part.byteLength;
+    }
+
+    return JSON.parse(new TextDecoder().decode(fullPlaintext)) as SharePayload;
+  }
+
+  // Legacy format: IV(12) + ciphertext (single block, no magic header)
   const iv = combined.slice(0, 12);
   const ciphertext = combined.slice(12);
 
