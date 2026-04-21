@@ -310,25 +310,19 @@ pnpm --filter @workspace/cloudflare run dev:worker   # starts Worker on :8787
 
 Then set `WORKER_URL=http://localhost:8787` in `.dev.vars`.
 
-**2 — Build the frontend**
+**2 — Build and start the Pages dev server**
 
-Wrangler Pages dev serves files from the built output directory.
-The Vite config requires `PORT` (dev server port — any free port works for a
-build) and `BASE_PATH` (URL base of the app — use `/` for local Pages dev):
-
-```bash
-PORT=3000 BASE_PATH=/ pnpm --filter @workspace/ephemeral-share run build
-```
-
-**3 — Start the Pages dev server**
+A single command builds the frontend and launches wrangler:
 
 ```bash
 pnpm --filter @workspace/ephemeral-share run pages:dev
 ```
 
-This runs `wrangler pages dev dist/public --port 8788` and activates the
-Pages Function so that `http://localhost:8788/api/*` is proxied through
-`functions/api/[[route]].ts` to the `WORKER_URL` you configured.
+This builds the Vite app (with `PORT=3000 BASE_PATH=/` pre-set) into
+`dist/public`, then runs `wrangler pages dev dist/public --port 8788`,
+activating the Pages Function so that `http://localhost:8788/api/*` is
+proxied through `functions/api/[[route]].ts` to the `WORKER_URL` you
+configured.
 
 > **Note**: `.dev.vars` is gitignored and should never be committed. Only
 > `.dev.vars.example` (which contains no real secrets) lives in the
