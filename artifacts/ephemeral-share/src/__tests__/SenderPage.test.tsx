@@ -341,6 +341,68 @@ describe("SenderPage — R2 upload retry flow", () => {
     expect(screen.queryByRole("textbox", { name: /^share link$/i })).not.toBeInTheDocument();
   });
 
+  it("calls createShareUploadUrl a second time and completes the upload when the presigned URL has expired", async () => {
+    // The first PUT fails; before retrying we advance time past the 900 s expiry
+    // window (with the built-in 30 s early-expiry buffer) so that handleRetryUpload
+    // takes the urlExpired branch and fetches a fresh presigned URL.
+    const realDateNow = Date.now();
+    // Return a fresh shareId so we can verify the retry used it.
+    mockCreateShareUploadUrl
+      .mockResolvedValueOnce({
+        shareId: "pending-123",
+        uploadUrl: "https://r2.example.com/upload/initial",
+      })
+      .mockResolvedValueOnce({
+        shareId: "pending-456",
+        uploadUrl: "https://r2.example.com/upload/fresh",
+      });
+
+    await renderAndPrepare();
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    // Wait for the retry button — first PUT returned 500.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+    });
+
+    // Advance Date.now() beyond uploadUrlExpiresAt - 30_000 (i.e. > 870 s forward).
+    vi.spyOn(Date, "now").mockReturnValue(realDateNow + 871_000);
+
+    // When hCaptcha is configured, the expired-URL gate requires a fresh captcha
+    // token before it will request a new presigned URL.  Solve the widget again
+    // so the component has a valid token when Retry Upload is clicked.
+    const captchaWidget = screen.queryByTestId("hcaptcha-widget");
+    if (captchaWidget) {
+      await act(async () => {
+        fireEvent.click(captchaWidget);
+      });
+    }
+
+    const retryBtn = screen.getByRole("button", { name: /retry upload/i });
+    await act(async () => {
+      fireEvent.click(retryBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("textbox", { name: /^share link$/i })).toBeInTheDocument();
+    });
+
+    // createShareUploadUrl should have been called once on submit and once on retry.
+    expect(mockCreateShareUploadUrl).toHaveBeenCalledTimes(2);
+
+    // confirmShare should use the fresh shareId returned by the second call.
+    expect(mockConfirmShare).toHaveBeenCalledWith({ shareId: "pending-456" });
+
+    const shareLinkInput = screen.getByRole("textbox", { name: /^share link$/i }) as HTMLInputElement;
+    expect(shareLinkInput.value).toContain("share-abc");
+
+    vi.restoreAllMocks();
+  });
+
   it("keeps the Retry Upload button available when the retried upload also fails", async () => {
     xhrResponseQueue = [500, 500];
 
