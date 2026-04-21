@@ -82,7 +82,7 @@ export async function handleCreateShare(
   if (input.shareType !== "text" && input.shareType !== "files") {
     return { ok: false, status: 400, error: "validation_error", message: "Invalid shareType." };
   }
-  if (typeof input.totalSize !== "number" || input.totalSize < 0 || input.totalSize > MAX_SHARE_BYTES) {
+  if (input.totalSize < 0 || input.totalSize > MAX_SHARE_BYTES) {
     return { ok: false, status: 413, error: "payload_too_large", message: `Total payload exceeds the size limit.` };
   }
   if (!/^[A-Za-z0-9+/=_-]+$/.test(input.encryptedData)) {
@@ -131,7 +131,7 @@ export async function handleUploadUrl(
   if (input.shareType !== "text" && input.shareType !== "files") {
     return { ok: false, status: 400, error: "validation_error", message: "Invalid shareType." };
   }
-  if (typeof input.totalSize !== "number" || input.totalSize < 0 || input.totalSize > MAX_SHARE_BYTES) {
+  if (input.totalSize < 0 || input.totalSize > MAX_SHARE_BYTES) {
     return { ok: false, status: 413, error: "payload_too_large", message: `Total payload exceeds the size limit.` };
   }
   if (input.fileMetadata && input.fileMetadata.length > MAX_FILES) {

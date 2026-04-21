@@ -28,10 +28,15 @@ import {
   handleAccessShare,
   handleDeleteShare,
   MAX_SHARE_BYTES,
-  MAX_FILES,
 } from "./handlers/shares.js";
 import { handleTestWebhook, fireWebhook } from "./handlers/webhook.js";
 import { handleHealth } from "./handlers/health.js";
+import {
+  CreateShareBody,
+  CreateShareUploadUrlBody,
+  ConfirmShareBody,
+  TestWebhookBody,
+} from "@workspace/api-zod";
 
 // ── Re-export Durable Object classes (required by wrangler) ──────────────────
 export { ShareAccessGate, NonceStore, RateLimiter };
@@ -72,6 +77,24 @@ async function parseBody(c: { req: { json: () => Promise<unknown> } }): Promise<
   } catch {
     return null;
   }
+}
+
+/**
+ * Validate `body` against a Zod schema. Returns the parsed data on success, or
+ * an object with `error`/`message` ready for an `ErrorResponse` on failure.
+ */
+function zodValidate<T>(
+  schema: { safeParse: (v: unknown) => { success: true; data: T } | { success: false; error: { errors: Array<{ path: (string | number)[]; message: string }> } } },
+  body: unknown
+): { ok: true; data: T } | { ok: false; error: string; message: string } {
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    const message = result.error.errors
+      .map((e) => (e.path.length > 0 ? `${e.path.join(".")}: ${e.message}` : e.message))
+      .join("; ");
+    return { ok: false, error: "validation_error", message };
+  }
+  return { ok: true, data: result.data };
 }
 
 /**
@@ -152,26 +175,28 @@ app.get("/api/health", (c) => {
 app.post("/api/shares", async (c) => {
   const ip = getClientIp(c.req.raw);
   const adapter = new CloudflareAdapter(c.env);
-  const body = await parseBody(c);
-  if (!body) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
+  const raw = await parseBody(c);
+  if (!raw) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
 
-  const gate = await gateCaptchaAndRateLimit(
-    c, adapter, ip, `create:${ip}`, RATE_LIMIT_MAX_CREATES,
-    body["captchaToken"] as string | undefined
-  );
+  const validated = zodValidate(CreateShareBody, raw);
+  if (!validated.ok) return c.json({ error: validated.error, message: validated.message }, 400);
+  const { captchaToken, encryptedData, ttl, shareType, totalSize,
+          passwordHash, passwordSalt, webhookUrl, webhookMessage, fileMetadata } = validated.data;
+
+  const gate = await gateCaptchaAndRateLimit(c, adapter, ip, `create:${ip}`, RATE_LIMIT_MAX_CREATES, captchaToken);
   if (gate) return gate;
 
   const result = await handleCreateShare(
     {
-      encryptedData: (body["encryptedData"] as string) ?? "",
-      ttl: (body["ttl"] as number) ?? 0,
-      shareType: body["shareType"] as "text" | "files",
-      totalSize: (body["totalSize"] as number) ?? 0,
-      passwordHash: (body["passwordHash"] as string | null) ?? null,
-      passwordSalt: (body["passwordSalt"] as string | null) ?? null,
-      webhookUrl: (body["webhookUrl"] as string | null) ?? null,
-      webhookMessage: (body["webhookMessage"] as string | null) ?? null,
-      fileMetadata: Array.isArray(body["fileMetadata"]) ? (body["fileMetadata"] as import("./adapters/types.js").FileMetaItem[]) : null,
+      encryptedData,
+      ttl,
+      shareType: shareType as "text" | "files",
+      totalSize,
+      passwordHash: passwordHash ?? null,
+      passwordSalt: passwordSalt ?? null,
+      webhookUrl: webhookUrl ?? null,
+      webhookMessage: webhookMessage ?? null,
+      fileMetadata: fileMetadata ?? null,
       captchaRequired: Boolean(c.env.HCAPTCHA_SECRET_KEY),
     },
     adapter
@@ -185,25 +210,27 @@ app.post("/api/shares", async (c) => {
 app.post("/api/shares/upload-url", async (c) => {
   const ip = getClientIp(c.req.raw);
   const adapter = new CloudflareAdapter(c.env);
-  const body = await parseBody(c);
-  if (!body) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
+  const raw = await parseBody(c);
+  if (!raw) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
 
-  const gate = await gateCaptchaAndRateLimit(
-    c, adapter, ip, `create:${ip}`, RATE_LIMIT_MAX_CREATES,
-    body["captchaToken"] as string | undefined
-  );
+  const validated = zodValidate(CreateShareUploadUrlBody, raw);
+  if (!validated.ok) return c.json({ error: validated.error, message: validated.message }, 400);
+  const { captchaToken, ttl, shareType, totalSize,
+          passwordHash, passwordSalt, webhookUrl, webhookMessage, fileMetadata } = validated.data;
+
+  const gate = await gateCaptchaAndRateLimit(c, adapter, ip, `create:${ip}`, RATE_LIMIT_MAX_CREATES, captchaToken);
   if (gate) return gate;
 
   const result = await handleUploadUrl(
     {
-      ttl: (body["ttl"] as number) ?? 0,
-      shareType: body["shareType"] as "text" | "files",
-      totalSize: (body["totalSize"] as number) ?? 0,
-      passwordHash: (body["passwordHash"] as string | null) ?? null,
-      passwordSalt: (body["passwordSalt"] as string | null) ?? null,
-      webhookUrl: (body["webhookUrl"] as string | null) ?? null,
-      webhookMessage: (body["webhookMessage"] as string | null) ?? null,
-      fileMetadata: Array.isArray(body["fileMetadata"]) ? (body["fileMetadata"] as import("./adapters/types.js").FileMetaItem[]) : null,
+      ttl,
+      shareType: shareType as "text" | "files",
+      totalSize,
+      passwordHash: passwordHash ?? null,
+      passwordSalt: passwordSalt ?? null,
+      webhookUrl: webhookUrl ?? null,
+      webhookMessage: webhookMessage ?? null,
+      fileMetadata: fileMetadata ?? null,
       captchaRequired: Boolean(c.env.HCAPTCHA_SECRET_KEY),
     },
     adapter
@@ -216,15 +243,13 @@ app.post("/api/shares/upload-url", async (c) => {
 // ── POST /api/shares/confirm — activate share after R2 upload ────────────────
 app.post("/api/shares/confirm", async (c) => {
   const adapter = new CloudflareAdapter(c.env);
-  const body = await parseBody(c);
-  if (!body) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
+  const raw = await parseBody(c);
+  if (!raw) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
 
-  const pendingShareId = body["shareId"];
-  if (!pendingShareId || typeof pendingShareId !== "string") {
-    return c.json({ error: "validation_error", message: "shareId is required." }, 400);
-  }
+  const validated = zodValidate(ConfirmShareBody, raw);
+  if (!validated.ok) return c.json({ error: validated.error, message: validated.message }, 400);
 
-  const result = await handleConfirmUpload(pendingShareId, adapter);
+  const result = await handleConfirmUpload(validated.data.shareId, adapter);
   if (!result.ok) return c.json({ error: result.error, message: result.message }, result.status as 404);
   return c.json(result.data, result.status as 201);
 });
@@ -298,10 +323,13 @@ app.post("/api/webhook/test", async (c) => {
     );
   }
 
-  const body = await parseBody(c);
-  if (!body) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
+  const raw = await parseBody(c);
+  if (!raw) return c.json({ error: "invalid_json", message: "Request body must be valid JSON." }, 400);
 
-  const result = await handleTestWebhook(body["webhookUrl"], adapter);
+  const validated = zodValidate(TestWebhookBody, raw);
+  if (!validated.ok) return c.json({ error: validated.error, message: validated.message }, 400);
+
+  const result = await handleTestWebhook(validated.data.webhookUrl, adapter);
   if (!result.ok) return c.json({ error: result.error, message: result.message }, result.status as 400);
   return c.json(result.data, result.status as 200);
 });

@@ -25,13 +25,9 @@ export function isBlockedHost(hostname: string): boolean {
 }
 
 export async function handleTestWebhook(
-  webhookUrl: unknown,
+  webhookUrl: string,
   _adapter: StorageAdapter
 ): Promise<HandlerResult<{ success: boolean; statusCode: number | null; message: string }>> {
-  if (!webhookUrl || typeof webhookUrl !== "string") {
-    return { ok: false, status: 400, error: "validation_error", message: "Invalid request body." };
-  }
-
   let url: URL;
   try {
     url = new URL(webhookUrl);
