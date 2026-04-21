@@ -234,7 +234,11 @@ export function extractKeyFromFragment(): string | null {
 }
 
 // Convert file to base64
-export function fileToBase64(file: File): Promise<string> {
+// onprogress receives (loaded, total) bytes as the FileReader reads the file.
+export function fileToBase64(
+  file: File,
+  onprogress?: (loaded: number, total: number) => void
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -244,6 +248,13 @@ export function fileToBase64(file: File): Promise<string> {
       resolve(base64);
     };
     reader.onerror = reject;
+    if (onprogress) {
+      reader.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onprogress(e.loaded, e.total);
+        }
+      };
+    }
     reader.readAsDataURL(file);
   });
 }

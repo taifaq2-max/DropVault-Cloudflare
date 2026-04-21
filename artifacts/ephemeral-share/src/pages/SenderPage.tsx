@@ -229,7 +229,8 @@ export default function SenderPage() {
   const [captchaToken, setCaptchaToken] = useState("");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [encryptProgress, setEncryptProgress] = useState(0);
-  const [uploadPhase, setUploadPhase] = useState<null | "encrypting" | "uploading" | "confirming">(null);
+  const [readProgress, setReadProgress] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState<null | "reading" | "encrypting" | "uploading" | "confirming">(null);
   /** Metadata for retrying a failed R2 PUT without re-encrypting. */
   const [r2RetryContext, setR2RetryContext] = useState<R2RetryContext | null>(null);
   /** Holds the encrypted ciphertext for retry — stored in a ref to avoid heavy re-renders. */
@@ -368,25 +369,7 @@ export default function SenderPage() {
       return;
     }
 
-    // Show encrypting phase immediately so the button disables and the progress bar appears.
-    // The animation timer also starts now, covering both the file-reading and AES-GCM phases
-    // so users never see a frozen "0%" during large file reads.
-    setUploadPhase("encrypting");
-    setEncryptProgress(0);
-    // Estimate total pre-upload work at ~100 MB/s; base64 expands files ~4/3×; 300 ms floor
-    const plaintextEstimateBytes = totalSize * (mode === "files" ? 1.34 : 1);
-    const estimatedEncryptMs = Math.max(300, (plaintextEstimateBytes / (100 * 1024 * 1024)) * 1000);
-    const encryptStart = Date.now();
     let encryptRafId = 0;
-    const animateEncrypt = () => {
-      const elapsed = Date.now() - encryptStart;
-      const ratio = Math.min(0.95, elapsed / estimatedEncryptMs);
-      setEncryptProgress(Math.round(ratio * 100));
-      if (ratio < 0.95) {
-        encryptRafId = requestAnimationFrame(animateEncrypt);
-      }
-    };
-    encryptRafId = requestAnimationFrame(animateEncrypt);
 
     try {
       // Build payload
@@ -394,18 +377,55 @@ export default function SenderPage() {
       if (mode === "text") {
         payload = { type: "text", text };
       } else {
+        // ── Reading phase: track per-file FileReader progress in aggregate ──
+        setUploadPhase("reading");
+        setReadProgress(0);
+
+        const totalFileBytes = files.reduce((a, f) => a + f.file.size, 0);
+        // Per-file loaded/total counters updated by FileReader.onprogress callbacks
+        const fileLoaded = files.map(() => 0);
+        const fileTotal = files.map((f) => f.file.size);
+
+        const updateReadProgress = () => {
+          const loaded = fileLoaded.reduce((a, v) => a + v, 0);
+          const total = fileTotal.reduce((a, v) => a + v, 0) || totalFileBytes || 1;
+          setReadProgress(Math.round((loaded / total) * 100));
+        };
+
         const fileData = await Promise.all(
-          files.map(async (fi) => ({
-            name: fi.name,
-            size: fi.file.size,
-            type: fi.file.type,
-            data: await fileToBase64(fi.file),
-          }))
+          files.map(async (fi, idx) => {
+            const data = await fileToBase64(fi.file, (loaded, total) => {
+              fileLoaded[idx] = loaded;
+              fileTotal[idx] = total;
+              updateReadProgress();
+            });
+            // Mark this file as fully loaded in case onprogress wasn't fired at 100%
+            fileLoaded[idx] = fi.file.size;
+            updateReadProgress();
+            return { name: fi.name, size: fi.file.size, type: fi.file.type, data };
+          })
         );
+
+        setReadProgress(100);
         payload = { type: "files", files: fileData };
       }
 
-      // Encrypt — the heuristic animation is already running from above
+      // ── Encrypting phase: heuristic animation covering AES-GCM ─────────
+      setUploadPhase("encrypting");
+      setEncryptProgress(0);
+      // Estimate AES-GCM duration at ~200 MB/s on the plaintext; 200 ms floor
+      const estimatedEncryptMs = Math.max(200, (totalSize / (200 * 1024 * 1024)) * 1000);
+      const encryptStart = Date.now();
+      const animateEncrypt = () => {
+        const elapsed = Date.now() - encryptStart;
+        const ratio = Math.min(0.95, elapsed / estimatedEncryptMs);
+        setEncryptProgress(Math.round(ratio * 100));
+        if (ratio < 0.95) {
+          encryptRafId = requestAnimationFrame(animateEncrypt);
+        }
+      };
+      encryptRafId = requestAnimationFrame(animateEncrypt);
+
       const { key, rawKey, keyBase64Url } = await generateEncryptionKey();
       const encryptedData = await encryptPayload(payload, key);
       cancelAnimationFrame(encryptRafId);
@@ -1097,7 +1117,7 @@ export default function SenderPage() {
                 </div>
               )}
 
-              {/* Progress indicator — shown during encrypting, uploading, and confirming */}
+              {/* Progress indicator — shown during reading, encrypting, uploading, and confirming */}
               <AnimatePresence>
                 {uploadPhase !== null && (
                   <motion.div
@@ -1108,14 +1128,18 @@ export default function SenderPage() {
                   >
                     <div className="flex items-center justify-between font-mono text-xs text-muted-foreground uppercase tracking-widest">
                       <span>
-                        {uploadPhase === "encrypting"
+                        {uploadPhase === "reading"
+                          ? "Reading files…"
+                          : uploadPhase === "encrypting"
                           ? "Encrypting…"
                           : uploadPhase === "uploading"
                           ? "Uploading…"
                           : "Confirming…"}
                       </span>
                       <span className="text-primary tabular-nums">
-                        {uploadPhase === "encrypting"
+                        {uploadPhase === "reading"
+                          ? `${readProgress}%`
+                          : uploadPhase === "encrypting"
                           ? `${encryptProgress}%`
                           : uploadPhase === "uploading"
                           ? `${uploadProgress}%`
@@ -1123,14 +1147,35 @@ export default function SenderPage() {
                       </span>
                     </div>
                     <div className="flex gap-1 items-center">
-                      {/* Step 1: Encrypt bar */}
+                      {/* Step 1: Read bar — only shown in file mode */}
+                      {mode === "files" && (
+                        <>
+                          <div className="flex-1 h-2 bg-muted overflow-hidden">
+                            <motion.div
+                              className="h-full bg-primary"
+                              initial={{ width: "0%" }}
+                              animate={{
+                                width:
+                                  uploadPhase === "reading"
+                                    ? `${readProgress}%`
+                                    : "100%",
+                              }}
+                              transition={{ ease: "linear", duration: 0.1 }}
+                            />
+                          </div>
+                          <div className="w-px h-4 bg-border shrink-0" />
+                        </>
+                      )}
+                      {/* Step 2 (or 1 in text mode): Encrypt bar */}
                       <div className="flex-1 h-2 bg-muted overflow-hidden">
                         <motion.div
                           className="h-full bg-primary"
                           initial={{ width: "0%" }}
                           animate={{
                             width:
-                              uploadPhase === "encrypting"
+                              uploadPhase === "reading"
+                                ? "0%"
+                                : uploadPhase === "encrypting"
                                 ? `${encryptProgress}%`
                                 : "100%",
                           }}
@@ -1138,7 +1183,7 @@ export default function SenderPage() {
                         />
                       </div>
                       <div className="w-px h-4 bg-border shrink-0" />
-                      {/* Step 2: Upload bar */}
+                      {/* Step 3 (or 2): Upload bar */}
                       <div className="flex-[2] h-2 bg-muted overflow-hidden">
                         <motion.div
                           className="h-full bg-primary"
@@ -1155,7 +1200,7 @@ export default function SenderPage() {
                         />
                       </div>
                       <div className="w-px h-4 bg-border shrink-0" />
-                      {/* Step 3: Confirm indicator */}
+                      {/* Step 4 (or 3): Confirm indicator */}
                       <div className="w-8 h-2 bg-muted overflow-hidden shrink-0">
                         <motion.div
                           className="h-full bg-primary"
@@ -1167,15 +1212,31 @@ export default function SenderPage() {
                         />
                       </div>
                     </div>
-                    <div className="flex font-mono text-xs text-muted-foreground gap-1">
+                    <div className="flex font-mono text-xs text-muted-foreground gap-1 flex-wrap">
+                      {mode === "files" && (
+                        <>
+                          <span
+                            className={
+                              uploadPhase === "reading"
+                                ? "text-primary"
+                                : "text-foreground"
+                            }
+                          >
+                            1. Read
+                          </span>
+                          <span className="mx-1">·</span>
+                        </>
+                      )}
                       <span
                         className={
                           uploadPhase === "encrypting"
                             ? "text-primary"
-                            : "text-foreground"
+                            : uploadPhase === "uploading" || uploadPhase === "confirming"
+                            ? "text-foreground"
+                            : ""
                         }
                       >
-                        1. Encrypt
+                        {mode === "files" ? "2. Encrypt" : "1. Encrypt"}
                       </span>
                       <span className="mx-1">·</span>
                       <span
@@ -1187,13 +1248,13 @@ export default function SenderPage() {
                             : ""
                         }
                       >
-                        2. Upload
+                        {mode === "files" ? "3. Upload" : "2. Upload"}
                       </span>
                       <span className="mx-1">·</span>
                       <span
                         className={uploadPhase === "confirming" ? "text-primary" : ""}
                       >
-                        3. Confirm
+                        {mode === "files" ? "4. Confirm" : "3. Confirm"}
                       </span>
                     </div>
                   </motion.div>
@@ -1224,13 +1285,15 @@ export default function SenderPage() {
                       >
                         ⟳
                       </motion.span>
-                      {uploadPhase === "encrypting"
+                      {uploadPhase === "reading"
+                        ? `READING… ${readProgress}%`
+                        : uploadPhase === "encrypting"
                         ? `ENCRYPTING… ${encryptProgress}%`
                         : uploadPhase === "uploading"
                         ? `UPLOADING… ${uploadProgress}%`
                         : uploadPhase === "confirming"
                         ? "CONFIRMING…"
-                        : "ENCRYPTING…"}
+                        : "PROCESSING…"}
                     </span>
                   ) : (
                     "CREATE SECURE SHARE"
