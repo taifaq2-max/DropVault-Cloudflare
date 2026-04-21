@@ -569,19 +569,41 @@ export default function SenderPage() {
 
   // Retries a failed R2 upload using the stored encrypted ciphertext.
   // Re-uses the presigned URL if it hasn't expired; otherwise re-requests one.
+  // When the URL has expired AND captcha is configured, a fresh captcha token
+  // must be solved first — this function checks for that and returns early with
+  // an instructional error so the user can solve the widget and click again.
   const handleRetryUpload = async () => {
     if (!r2RetryContext || !r2EncryptedDataRef.current) return;
     setError("");
-    setUploadPhase("uploading");
-    setUploadProgress(0);
 
     let { pendingId, uploadUrl } = r2RetryContext;
     const { uploadUrlExpiresAt, keyForUrl, shareParams } = r2RetryContext;
 
+    const urlExpired = Date.now() >= uploadUrlExpiresAt - 30_000;
+
+    // Gate: if the presigned URL has expired AND captcha is required, we need a
+    // fresh captcha token before we can request a new URL.  Tell the user to
+    // solve the widget above and try again — do not clear the retry context.
+    if (urlExpired && HCAPTCHA_SITE_KEY && !captchaToken) {
+      setError(
+        "Your upload window has expired. Please complete the verification above, then click Retry Upload."
+      );
+      return;
+    }
+
+    setUploadPhase("uploading");
+    setUploadProgress(0);
+
     try {
       // If the presigned URL is within 30 s of expiry (or already past), request a fresh one.
-      if (Date.now() >= uploadUrlExpiresAt - 30_000) {
-        const fresh = await createShareUploadUrl({ ...shareParams, captchaToken: undefined });
+      if (urlExpired) {
+        const fresh = await createShareUploadUrl({
+          ...shareParams,
+          captchaToken: captchaToken || undefined,
+        });
+        // Captcha token is single-use — reset it now that we've consumed it.
+        captchaRef.current?.resetCaptcha();
+        setCaptchaToken("");
         pendingId = fresh.shareId;
         uploadUrl = fresh.uploadUrl;
         setR2RetryContext({
@@ -631,6 +653,7 @@ export default function SenderPage() {
       setExpiresAt(result.expiresAt);
       setShareCreated(true);
     } catch (err: unknown) {
+      // Captcha token is single-use; reset on any failure to force a fresh solve.
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       setUploadPhase(null);
