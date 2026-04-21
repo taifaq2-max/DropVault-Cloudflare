@@ -460,7 +460,9 @@ export default function SenderPage() {
         setR2RetryContext({
           pendingId,
           uploadUrl,
-          uploadUrlExpiresAt: Date.now() + 900_000, // 15-minute presigned URL TTL
+          // TODO: prefer a server-returned expiry (e.g. `uploadUrlExpiresAt` in the
+          // UploadUrlResponse) so this stays in sync if the backend TTL changes.
+          uploadUrlExpiresAt: Date.now() + 900_000, // mirrors r2sign.ts expiresIn: 900
           keyForUrl,
           shareParams: {
             ttl, shareType, totalSize, passwordHash, passwordSalt,
@@ -610,7 +612,7 @@ export default function SenderPage() {
           ...r2RetryContext,
           pendingId,
           uploadUrl,
-          uploadUrlExpiresAt: Date.now() + 900_000,
+          uploadUrlExpiresAt: Date.now() + 900_000, // mirrors r2sign.ts expiresIn: 900
         });
       }
 
