@@ -176,6 +176,8 @@ export default function ReceiverPage() {
   }, [phase]);
 
   const [peekLoading, setPeekLoading] = useState(false);
+  // True while the post-captcha-error tokenless re-check is in-flight
+  const [reCheckLoading, setReCheckLoading] = useState(false);
 
   // When the captcha gate first appears, do a token-less pre-check so users
   // learn immediately if the share is already gone — before solving the widget.
@@ -224,6 +226,7 @@ export default function ReceiverPage() {
         // meantime (race condition or a failing hcaptcha network call after the early share check).
         // Do a quick tokenless re-peek so we surface the correct error instead of looping the user
         // on the captcha retry screen when the share is already gone.
+        setReCheckLoading(true);
         try {
           await fetchPeek();
           // Re-peek succeeded (share still exists and no captcha on tokenless path) — fall through
@@ -246,6 +249,8 @@ export default function ReceiverPage() {
             return;
           }
           // captcha_required or other errors → share still exists, continue to retry message
+        } finally {
+          setReCheckLoading(false);
         }
         // Stay on the captcha screen — show a retry message instead of the error page
         setCaptchaGateError("Verification failed. Please complete the captcha again.");
@@ -585,11 +590,38 @@ export default function ReceiverPage() {
                     onError={() => setCaptchaToken("")}
                   />
                 </div>
-                {captchaGateError && (
-                  <p className="text-sm font-mono text-destructive mt-4" role="alert">
-                    {captchaGateError}
-                  </p>
-                )}
+                <AnimatePresence>
+                  {reCheckLoading && (
+                    <motion.div
+                      key="recheck"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="flex items-center justify-center gap-2 text-muted-foreground mt-4"
+                      aria-live="polite"
+                      aria-label="Checking share status"
+                    >
+                      <motion.div
+                        animate={{ rotate: 360 }}
+                        transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                        className="w-3 h-3 border border-primary border-t-transparent rounded-full"
+                      />
+                      <span className="font-mono text-xs">Checking share status…</span>
+                    </motion.div>
+                  )}
+                  {!reCheckLoading && captchaGateError && (
+                    <motion.div
+                      key="captcha-error"
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="text-sm font-mono text-destructive mt-4"
+                      role="alert"
+                    >
+                      {captchaGateError}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
                 <Button
                   onClick={handlePeekWithCaptcha}
                   disabled={!captchaToken || peekLoading || preCheckLoading}

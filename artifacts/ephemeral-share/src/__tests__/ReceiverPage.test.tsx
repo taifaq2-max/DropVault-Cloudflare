@@ -394,6 +394,55 @@ describe("ReceiverPage — captcha submission flow", () => {
     });
   });
 
+  it("captcha_error response, delayed re-check shows 'Checking share status…' indicator while in-flight", async () => {
+    let resolveReCheck!: (value: Response) => void;
+    const reCheckPromise = new Promise<Response>((resolve) => {
+      resolveReCheck = resolve;
+    });
+
+    let tokenlessCalls = 0;
+    mockFetch.mockImplementation((url: string) => {
+      if ((url as string).includes("captchaToken=")) {
+        return Promise.resolve(mockResponse(400, { error: "captcha_error" }));
+      }
+      tokenlessCalls++;
+      if (tokenlessCalls === 1) {
+        // pre-check on captcha mount → stays on captcha gate
+        return Promise.resolve(mockResponse(403, { error: "captcha_required" }));
+      }
+      // second tokenless call is the re-check — delay it
+      return reCheckPromise;
+    });
+
+    render(React.createElement(ReceiverPage));
+
+    await waitFor(() => expect(screen.getByTestId("hcaptcha-widget")).toBeInTheDocument());
+
+    await act(async () => { fireEvent.click(screen.getByTestId("hcaptcha-widget")); });
+
+    const continueBtn = await screen.findByRole("button", { name: /continue to access share/i });
+
+    // Click Continue — this triggers captcha_error → starts the slow re-check
+    act(() => { fireEvent.click(continueBtn); });
+
+    // While the re-check is still pending, the status indicator should appear
+    await waitFor(() => {
+      expect(screen.getByLabelText(/checking share status/i)).toBeInTheDocument();
+    });
+
+    // Resolve the re-check (share still exists / captcha_required)
+    await act(async () => {
+      resolveReCheck(mockResponse(403, { error: "captcha_required" }));
+      await reCheckPromise;
+    });
+
+    // After re-check resolves, the error message should appear and indicator should be gone
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/verification failed/i);
+    });
+    expect(screen.queryByLabelText(/checking share status/i)).not.toBeInTheDocument();
+  });
+
   it("captcha submission returns 410 already_accessed → transitions to share_consumed", async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes("captchaToken=")) {
