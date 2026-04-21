@@ -87,7 +87,8 @@ const CHUNK_SIZE = 4 * 1024 * 1024; // 4 MB per chunk
 export async function encryptPayload(
   payload: SharePayload,
   key: CryptoKey,
-  onProgress?: (bytesEncrypted: number, totalBytes: number) => void
+  onProgress?: (bytesEncrypted: number, totalBytes: number) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   const plaintext = new TextEncoder().encode(JSON.stringify(payload));
   const totalBytes = plaintext.byteLength;
@@ -97,6 +98,10 @@ export async function encryptPayload(
   let bytesEncrypted = 0;
 
   for (let i = 0; i < numChunks; i++) {
+    if (signal?.aborted) {
+      throw new DOMException("Encryption cancelled.", "AbortError");
+    }
+
     const start = i * CHUNK_SIZE;
     const end = Math.min(start + CHUNK_SIZE, totalBytes);
     const chunk = plaintext.slice(start, end);
@@ -333,19 +338,40 @@ export function extractKeyFromFragment(): string | null {
 
 // Convert file to base64
 // onprogress receives (loaded, total) bytes as the FileReader reads the file.
+// signal, when provided, will abort the FileReader and reject with an AbortError.
 export function fileToBase64(
   file: File,
-  onprogress?: (loaded: number, total: number) => void
+  onprogress?: (loaded: number, total: number) => void,
+  signal?: AbortSignal
 ): Promise<string> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("File read cancelled.", "AbortError"));
+      return;
+    }
+
     const reader = new FileReader();
+
+    const onAbort = () => {
+      reader.abort();
+      reject(new DOMException("File read cancelled.", "AbortError"));
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+
     reader.onload = () => {
+      signal?.removeEventListener("abort", onAbort);
       const result = reader.result as string;
-      // Remove data URL prefix
       const base64 = result.split(",")[1];
       resolve(base64);
     };
-    reader.onerror = reject;
+    reader.onerror = () => {
+      signal?.removeEventListener("abort", onAbort);
+      reject(reader.error);
+    };
+    reader.onabort = () => {
+      signal?.removeEventListener("abort", onAbort);
+    };
     if (onprogress) {
       reader.onprogress = (e) => {
         if (e.lengthComputable) {

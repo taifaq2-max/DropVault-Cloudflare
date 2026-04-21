@@ -236,6 +236,10 @@ export default function SenderPage() {
   const [r2RetryContext, setR2RetryContext] = useState<R2RetryContext | null>(null);
   /** Holds the encrypted ciphertext for retry — stored in a ref to avoid heavy re-renders. */
   const r2EncryptedDataRef = useRef<string | null>(null);
+  /** AbortController for the active reading/encrypting operation. */
+  const cancelControllerRef = useRef<AbortController | null>(null);
+  /** Monotonically increasing counter; incremented on each new attempt so stale async tails can self-discard. */
+  const attemptIdRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captchaRef = useRef<HCaptcha>(null);
 
@@ -348,11 +352,26 @@ export default function SenderPage() {
     }
   };
 
+  const handleCancel = () => {
+    cancelControllerRef.current?.abort();
+    cancelControllerRef.current = null;
+    setUploadPhase(null);
+    setReadProgress(0);
+    setEncryptProgress(0);
+    setActiveReadingFile(null);
+  };
+
   const handleCreateShare = async () => {
     setError("");
     // Always start fresh — discard any leftover retry context from a previous attempt.
     setR2RetryContext(null);
     r2EncryptedDataRef.current = null;
+    // Create a fresh AbortController for this attempt and stamp a unique ID
+    // so that any stale async tail from a previous attempt can self-discard.
+    const attemptId = ++attemptIdRef.current;
+    const cancelController = new AbortController();
+    cancelControllerRef.current = cancelController;
+    const signal = cancelController.signal;
     if (mode === "text" && !text.trim()) {
       setError("Please enter some text to share.");
       return;
@@ -401,7 +420,7 @@ export default function SenderPage() {
               fileLoaded[idx] = loaded;
               fileTotal[idx] = total;
               updateReadProgress(idx);
-            });
+            }, signal);
             // Mark this file as fully loaded in case onprogress wasn't fired at 100%
             fileLoaded[idx] = fi.file.size;
             updateReadProgress();
@@ -423,7 +442,8 @@ export default function SenderPage() {
         key,
         (bytesEncrypted, totalBytes) => {
           setEncryptProgress(Math.round((bytesEncrypted / totalBytes) * 100));
-        }
+        },
+        signal
       );
       setEncryptProgress(100);
       // Brief pause so users can see the completed encryption step
@@ -550,6 +570,9 @@ export default function SenderPage() {
         });
       }
 
+      // Discard if a newer attempt has already started (stale cancel race guard).
+      if (attemptIdRef.current !== attemptId) return;
+      cancelControllerRef.current = null;
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       setUploadPhase(null);
@@ -561,6 +584,18 @@ export default function SenderPage() {
       setExpiresAt(result.expiresAt);
       setShareCreated(true);
     } catch (err: unknown) {
+      // Discard this tail if a newer attempt has already started (stale cancel race guard).
+      if (attemptIdRef.current !== attemptId) return;
+
+      cancelControllerRef.current = null;
+      // AbortError means the user clicked Cancel — reset silently with no error message.
+      if ((err as { name?: string }).name === "AbortError") {
+        setUploadPhase(null);
+        setReadProgress(0);
+        setEncryptProgress(0);
+        setActiveReadingFile(null);
+        return;
+      }
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       setUploadPhase(null);
@@ -1121,7 +1156,7 @@ export default function SenderPage() {
                     className="border border-primary/30 bg-card p-4 space-y-3"
                   >
                     <div className="flex items-center justify-between font-mono text-xs text-muted-foreground uppercase tracking-widest">
-                      <span className="truncate mr-2 min-w-0">
+                      <span className="truncate mr-2 min-w-0 flex-1">
                         {uploadPhase === "reading"
                           ? activeReadingFile
                             ? activeReadingFile.total > 1
@@ -1134,7 +1169,7 @@ export default function SenderPage() {
                           ? "Uploading…"
                           : "Confirming…"}
                       </span>
-                      <span className="text-primary tabular-nums">
+                      <span className="text-primary tabular-nums mr-2">
                         {uploadPhase === "reading"
                           ? `${readProgress}%`
                           : uploadPhase === "encrypting"
@@ -1143,6 +1178,16 @@ export default function SenderPage() {
                           ? `${uploadProgress}%`
                           : ""}
                       </span>
+                      {(uploadPhase === "reading" || uploadPhase === "encrypting") && (
+                        <button
+                          type="button"
+                          onClick={handleCancel}
+                          className="shrink-0 font-mono text-xs px-2 py-1 border border-border text-muted-foreground hover:border-destructive/60 hover:text-destructive transition-colors"
+                          aria-label="Cancel share creation"
+                        >
+                          Cancel
+                        </button>
+                      )}
                     </div>
                     <div className="flex gap-1 items-center">
                       {/* Step 1: Read bar — only shown in file mode */}
