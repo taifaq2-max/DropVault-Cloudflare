@@ -49,6 +49,31 @@ interface FileItem {
   preview?: string;
 }
 
+/**
+ * Saved context for retrying a failed R2 PUT without re-encrypting.
+ * The large ciphertext is stored in a separate ref (r2EncryptedDataRef)
+ * to avoid triggering unnecessary React re-renders.
+ */
+interface R2RetryContext {
+  pendingId: string;
+  uploadUrl: string;
+  /** Unix ms — presigned PUT URL becomes invalid after this time. */
+  uploadUrlExpiresAt: number;
+  /** URL fragment key (raw key or encrypted key) for building the share URL. */
+  keyForUrl: string;
+  /** Params needed to re-request a new presigned URL when the old one expires. */
+  shareParams: {
+    ttl: number;
+    shareType: "text" | "files";
+    totalSize: number;
+    passwordHash: string | null;
+    passwordSalt: string | null;
+    webhookUrl: string | null;
+    webhookMessage: string | null;
+    fileMetadata: Array<{ name: string; size: number; type: string; originalIndex: number }> | null;
+  };
+}
+
 function TtlPicker({
   value,
   onChange,
@@ -205,6 +230,10 @@ export default function SenderPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [encryptProgress, setEncryptProgress] = useState(0);
   const [uploadPhase, setUploadPhase] = useState<null | "encrypting" | "uploading" | "confirming">(null);
+  /** Metadata for retrying a failed R2 PUT without re-encrypting. */
+  const [r2RetryContext, setR2RetryContext] = useState<R2RetryContext | null>(null);
+  /** Holds the encrypted ciphertext for retry — stored in a ref to avoid heavy re-renders. */
+  const r2EncryptedDataRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const captchaRef = useRef<HCaptcha>(null);
 
@@ -229,6 +258,16 @@ export default function SenderPage() {
     }, 1000);
     return () => clearInterval(id);
   }, [rateLimitSeconds]);
+
+  // Clear retry context whenever the shareable content changes so that the
+  // "Retry Upload" button can never re-upload stale ciphertext.
+  useEffect(() => {
+    if (r2RetryContext) {
+      setR2RetryContext(null);
+      r2EncryptedDataRef.current = null;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, files, password, passwordEnabled]);
 
   const totalSize =
     mode === "text"
@@ -309,6 +348,9 @@ export default function SenderPage() {
 
   const handleCreateShare = async () => {
     setError("");
+    // Always start fresh — discard any leftover retry context from a previous attempt.
+    setR2RetryContext(null);
+    r2EncryptedDataRef.current = null;
     if (mode === "text" && !text.trim()) {
       setError("Please enter some text to share.");
       return;
@@ -388,6 +430,12 @@ export default function SenderPage() {
         ? files.map((fi, i) => ({ name: fi.name, size: fi.file.size, type: fi.file.type, originalIndex: i }))
         : null;
 
+      // Compute keyForUrl here (before the R2 block) so it can be saved in the
+      // retry context — the retry function needs it to build the share URL on success.
+      const keyForUrl = passwordEnabled && passwordHash
+        ? encodeURIComponent(passwordHash)
+        : keyBase64Url;
+
       let result: { shareId: string; expiresAt: string };
 
       if (USE_R2_UPLOADS) {
@@ -405,35 +453,68 @@ export default function SenderPage() {
           captchaToken: captchaToken || undefined,
         });
 
+        // Save retry context immediately after getting the presigned URL.
+        // This lets the "Retry Upload" button re-use the same URL (or re-request
+        // a new one) without re-encrypting the payload from scratch.
+        r2EncryptedDataRef.current = encryptedData;
+        setR2RetryContext({
+          pendingId,
+          uploadUrl,
+          uploadUrlExpiresAt: Date.now() + 900_000, // 15-minute presigned URL TTL
+          keyForUrl,
+          shareParams: {
+            ttl, shareType, totalSize, passwordHash, passwordSalt,
+            webhookUrl: webhookUrl || null,
+            webhookMessage: webhookMessage || null,
+            fileMetadata: fileMeta,
+          },
+        });
+
         // 2. PUT the encrypted ciphertext directly to R2 via XHR (exposes upload progress).
+        // Uses a nested try/catch so that XHR failures surface as a "Retry Upload" button
+        // rather than falling through to the outer catch that clears all state.
         setUploadPhase("uploading");
         setUploadProgress(0);
-        await new Promise<void>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.upload.onprogress = (e) => {
-            if (e.lengthComputable) {
-              setUploadProgress(Math.round((e.loaded / e.total) * 100));
-            }
-          };
-          xhr.onload = () => {
-            if (xhr.status >= 200 && xhr.status < 300) {
-              setUploadProgress(100);
-              resolve();
-            } else {
-              reject(new Error(`R2 upload failed (status ${xhr.status}). Please try again.`));
-            }
-          };
-          xhr.onerror = () => reject(new Error("R2 upload failed. Please try again."));
-          xhr.onabort = () => reject(new Error("Upload was cancelled. Please try again."));
-          xhr.ontimeout = () => reject(new Error("Upload timed out. Check your connection and try again."));
-          xhr.open("PUT", uploadUrl);
-          xhr.setRequestHeader("Content-Type", "application/octet-stream");
-          xhr.send(encryptedData);
-        });
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.upload.onprogress = (e) => {
+              if (e.lengthComputable) {
+                setUploadProgress(Math.round((e.loaded / e.total) * 100));
+              }
+            };
+            xhr.onload = () => {
+              if (xhr.status >= 200 && xhr.status < 300) {
+                setUploadProgress(100);
+                resolve();
+              } else {
+                reject(new Error(`R2 upload failed (status ${xhr.status}). Please try again.`));
+              }
+            };
+            xhr.onerror = () => reject(new Error("R2 upload failed. Please try again."));
+            xhr.onabort = () => reject(new Error("Upload was cancelled. Please try again."));
+            xhr.ontimeout = () => reject(new Error("Upload timed out. Check your connection and try again."));
+            xhr.open("PUT", uploadUrl);
+            xhr.setRequestHeader("Content-Type", "application/octet-stream");
+            xhr.send(encryptedData);
+          });
+        } catch (r2Err) {
+          // XHR PUT failed — keep r2RetryContext so "Retry Upload" button is shown.
+          cancelAnimationFrame(encryptRafId);
+          captchaRef.current?.resetCaptcha();
+          setCaptchaToken("");
+          setUploadPhase(null);
+          setError((r2Err as Error).message ?? "Upload failed. Use the Retry Upload button below to try again.");
+          return;
+        }
 
         // 3. Confirm the upload — Worker verifies the R2 object exists and activates the share.
         setUploadPhase("confirming");
         result = await confirmShare({ shareId: pendingId });
+
+        // Success — clear retry context and ciphertext ref.
+        setR2RetryContext(null);
+        r2EncryptedDataRef.current = null;
       } else {
         // ── Inline KV path (dev / legacy) ─────────────────────────────────
         result = await createShare.mutateAsync({
@@ -456,11 +537,7 @@ export default function SenderPage() {
       setCaptchaToken("");
       setUploadPhase(null);
 
-      // When password is set: put encrypted key in URL (receiver needs password to recover raw key)
-      // When no password: put raw key directly in URL
-      const keyForUrl = passwordEnabled && passwordHash
-        ? encodeURIComponent(passwordHash)
-        : keyBase64Url;
+      // keyForUrl was already computed above before the R2 block; use it directly.
       const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       const url = `${window.location.origin}${base}/share/${result.shareId}#key=${keyForUrl}`;
       setShareUrl(url);
@@ -471,6 +548,10 @@ export default function SenderPage() {
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       setUploadPhase(null);
+      // For non-XHR errors (rate limit, createShareUploadUrl failures, etc.),
+      // clear the retry context — there's nothing to retry at the PUT level.
+      setR2RetryContext(null);
+      r2EncryptedDataRef.current = null;
       // ApiError (from generated client) stores the parsed body in .data;
       // legacy raw-fetch errors store it in .response.data.
       type ErrData = { retryAfterSeconds?: number; message?: string };
@@ -486,6 +567,79 @@ export default function SenderPage() {
     }
   };
 
+  // Retries a failed R2 upload using the stored encrypted ciphertext.
+  // Re-uses the presigned URL if it hasn't expired; otherwise re-requests one.
+  const handleRetryUpload = async () => {
+    if (!r2RetryContext || !r2EncryptedDataRef.current) return;
+    setError("");
+    setUploadPhase("uploading");
+    setUploadProgress(0);
+
+    let { pendingId, uploadUrl } = r2RetryContext;
+    const { uploadUrlExpiresAt, keyForUrl, shareParams } = r2RetryContext;
+
+    try {
+      // If the presigned URL is within 30 s of expiry (or already past), request a fresh one.
+      if (Date.now() >= uploadUrlExpiresAt - 30_000) {
+        const fresh = await createShareUploadUrl({ ...shareParams, captchaToken: undefined });
+        pendingId = fresh.shareId;
+        uploadUrl = fresh.uploadUrl;
+        setR2RetryContext({
+          ...r2RetryContext,
+          pendingId,
+          uploadUrl,
+          uploadUrlExpiresAt: Date.now() + 900_000,
+        });
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            setUploadProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            setUploadProgress(100);
+            resolve();
+          } else {
+            reject(new Error(`R2 upload failed (status ${xhr.status}). Please try again.`));
+          }
+        };
+        xhr.onerror = () => reject(new Error("R2 upload failed. Please check your connection and try again."));
+        xhr.onabort = () => reject(new Error("Upload was cancelled. Please try again."));
+        xhr.ontimeout = () => reject(new Error("Upload timed out. Check your connection and try again."));
+        xhr.open("PUT", uploadUrl);
+        xhr.setRequestHeader("Content-Type", "application/octet-stream");
+        xhr.send(r2EncryptedDataRef.current!);
+      });
+
+      setUploadPhase("confirming");
+      const result = await confirmShare({ shareId: pendingId });
+
+      // Success — clear retry context and build share URL.
+      setR2RetryContext(null);
+      r2EncryptedDataRef.current = null;
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken("");
+      setUploadPhase(null);
+
+      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+      const url = `${window.location.origin}${base}/share/${result.shareId}#key=${keyForUrl}`;
+      setShareUrl(url);
+      setExpiresAt(result.expiresAt);
+      setShareCreated(true);
+    } catch (err: unknown) {
+      captchaRef.current?.resetCaptcha();
+      setCaptchaToken("");
+      setUploadPhase(null);
+      // Keep r2RetryContext on failure so the button remains available.
+      const errData = (err as { data?: { message?: string } }).data;
+      setError(errData?.message ?? (err as Error).message ?? "Retry failed. Please try again.");
+    }
+  };
+
   const handleCreateNew = () => {
     setShareCreated(false);
     setShareUrl("");
@@ -496,6 +650,8 @@ export default function SenderPage() {
     setError("");
     setCaptchaToken("");
     captchaRef.current?.resetCaptcha();
+    setR2RetryContext(null);
+    r2EncryptedDataRef.current = null;
   };
 
   const copyPassword = async () => {
@@ -881,10 +1037,23 @@ export default function SenderPage() {
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm font-mono text-destructive"
-                    role="alert"
+                    className="space-y-2"
                   >
-                    {error}
+                    <div
+                      className="border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm font-mono text-destructive"
+                      role="alert"
+                    >
+                      {error}
+                    </div>
+                    {r2RetryContext && !uploadPhase && (
+                      <button
+                        type="button"
+                        onClick={handleRetryUpload}
+                        className="w-full rounded-md border border-amber-500/60 bg-amber-500/10 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:text-amber-400"
+                      >
+                        Retry Upload
+                      </button>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
