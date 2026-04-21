@@ -277,6 +277,8 @@ Replace the origin with your actual Pages or custom domain.
 
 ## Local development
 
+### Standard dev server (Vite proxy — recommended for most development)
+
 The existing Node.js + Express dev server is unchanged. Run it with:
 
 ```bash
@@ -286,6 +288,51 @@ pnpm --filter @workspace/api-server run dev
 The frontend proxies `/api/*` to `localhost:8080` via Vite's dev server
 proxy. R2 uploads are disabled in this mode (`VITE_USE_R2_UPLOADS` is not
 set) and the inline 4 MB KV path is used instead.
+
+### Testing the Pages Function proxy locally (Option B only)
+
+If you are using the Pages Function proxy (`functions/api/[[route]].ts`) and
+want to validate its routing behaviour before deploying to Cloudflare Pages,
+you can run it locally with Wrangler:
+
+**1 — Create your local secrets file**
+
+```bash
+cp artifacts/ephemeral-share/.dev.vars.example artifacts/ephemeral-share/.dev.vars
+```
+
+Edit `.dev.vars` and set `WORKER_URL` to the Worker you want to proxy to.
+For full local testing, run the Worker locally first:
+
+```bash
+pnpm --filter @workspace/cloudflare run dev:worker   # starts Worker on :8787
+```
+
+Then set `WORKER_URL=http://localhost:8787` in `.dev.vars`.
+
+**2 — Build the frontend**
+
+Wrangler Pages dev serves files from the built output directory.
+The Vite config requires `PORT` (dev server port — any free port works for a
+build) and `BASE_PATH` (URL base of the app — use `/` for local Pages dev):
+
+```bash
+PORT=3000 BASE_PATH=/ pnpm --filter @workspace/ephemeral-share run build
+```
+
+**3 — Start the Pages dev server**
+
+```bash
+pnpm --filter @workspace/ephemeral-share run pages:dev
+```
+
+This runs `wrangler pages dev dist/public --port 8788` and activates the
+Pages Function so that `http://localhost:8788/api/*` is proxied through
+`functions/api/[[route]].ts` to the `WORKER_URL` you configured.
+
+> **Note**: `.dev.vars` is gitignored and should never be committed. Only
+> `.dev.vars.example` (which contains no real secrets) lives in the
+> repository.
 
 ---
 

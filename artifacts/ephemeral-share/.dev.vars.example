@@ -1,0 +1,14 @@
+# Local Pages Function variables for `wrangler pages dev`
+# Copy this file to .dev.vars and fill in the values.
+# .dev.vars is gitignored — never commit real secrets.
+
+# Required for Option B (Pages Function proxy).
+# Must be the Worker origin with no trailing slash and no path suffix.
+# The Pages Function appends the full /api/... path itself.
+#
+# For local development, point this at your locally-running Worker:
+#   WORKER_URL=http://localhost:8787
+#
+# Or point at a deployed Worker:
+#   WORKER_URL=https://vaultdrop-api.<account>.workers.dev
+WORKER_URL=http://localhost:8787
