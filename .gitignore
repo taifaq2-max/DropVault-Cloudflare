@@ -50,3 +50,7 @@ Thumbs.db
 # Replit
 .cache/
 .local/
+
+# Playwright test artifacts
+**/test-results/
+**/playwright-report/
