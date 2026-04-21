@@ -230,6 +230,7 @@ export default function SenderPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [encryptProgress, setEncryptProgress] = useState(0);
   const [readProgress, setReadProgress] = useState(0);
+  const [activeReadingFile, setActiveReadingFile] = useState<{ name: string; index: number; total: number } | null>(null);
   const [uploadPhase, setUploadPhase] = useState<null | "reading" | "encrypting" | "uploading" | "confirming">(null);
   /** Metadata for retrying a failed R2 PUT without re-encrypting. */
   const [r2RetryContext, setR2RetryContext] = useState<R2RetryContext | null>(null);
@@ -378,16 +379,20 @@ export default function SenderPage() {
         // ── Reading phase: track per-file FileReader progress in aggregate ──
         setUploadPhase("reading");
         setReadProgress(0);
+        setActiveReadingFile(files.length > 0 ? { name: files[0].name, index: 0, total: files.length } : null);
 
         const totalFileBytes = files.reduce((a, f) => a + f.file.size, 0);
         // Per-file loaded/total counters updated by FileReader.onprogress callbacks
         const fileLoaded = files.map(() => 0);
         const fileTotal = files.map((f) => f.file.size);
 
-        const updateReadProgress = () => {
+        const updateReadProgress = (activeIdx?: number) => {
           const loaded = fileLoaded.reduce((a, v) => a + v, 0);
           const total = fileTotal.reduce((a, v) => a + v, 0) || totalFileBytes || 1;
           setReadProgress(Math.round((loaded / total) * 100));
+          if (activeIdx !== undefined) {
+            setActiveReadingFile({ name: files[activeIdx].name, index: activeIdx, total: files.length });
+          }
         };
 
         const fileData = await Promise.all(
@@ -395,7 +400,7 @@ export default function SenderPage() {
             const data = await fileToBase64(fi.file, (loaded, total) => {
               fileLoaded[idx] = loaded;
               fileTotal[idx] = total;
-              updateReadProgress();
+              updateReadProgress(idx);
             });
             // Mark this file as fully loaded in case onprogress wasn't fired at 100%
             fileLoaded[idx] = fi.file.size;
@@ -1116,9 +1121,13 @@ export default function SenderPage() {
                     className="border border-primary/30 bg-card p-4 space-y-3"
                   >
                     <div className="flex items-center justify-between font-mono text-xs text-muted-foreground uppercase tracking-widest">
-                      <span>
+                      <span className="truncate mr-2 min-w-0">
                         {uploadPhase === "reading"
-                          ? "Reading files…"
+                          ? activeReadingFile
+                            ? activeReadingFile.total > 1
+                              ? `Reading ${activeReadingFile.name} (${activeReadingFile.index + 1} of ${activeReadingFile.total})…`
+                              : `Reading ${activeReadingFile.name}…`
+                            : "Reading files…"
                           : uploadPhase === "encrypting"
                           ? "Encrypting…"
                           : uploadPhase === "uploading"
