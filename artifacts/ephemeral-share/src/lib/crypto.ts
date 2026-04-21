@@ -145,7 +145,8 @@ export async function encryptPayload(
 
 export async function decryptPayload(
   encryptedDataBase64: string,
-  key: CryptoKey
+  key: CryptoKey,
+  onProgress?: (bytesDecrypted: number, totalBytes: number) => void
 ): Promise<SharePayload> {
   const combined = new Uint8Array(base64ToBuffer(encryptedDataBase64));
 
@@ -166,8 +167,44 @@ export async function decryptPayload(
     if (numChunks === 0 || numChunks > 100_000) {
       throw new Error("Decryption failed: invalid chunk count in payload.");
     }
+
+    // Pre-scan all chunks to compute total ciphertext bytes (for progress) and
+    // total plaintext bytes (for pre-allocation). AES-GCM appends a 16-byte
+    // auth tag, so plaintext = ciphertextLen - 16 per chunk.
+    // Each chunk is fully validated against the buffer bounds before its length
+    // is used so that a malformed payload cannot trigger an oversized allocation.
+    const MAX_PLAINTEXT_BYTES = 256 * 1024 * 1024; // 256 MB hard upper bound
+    let totalCiphertextBytes = 0;
+    let totalPlaintextBytes = 0;
+    {
+      let scanOffset = 8;
+      for (let i = 0; i < numChunks; i++) {
+        if (scanOffset + 4 > combined.length) {
+          throw new Error("Decryption failed: payload is truncated (missing chunk length in pre-scan).");
+        }
+        const len = view.getUint32(scanOffset, false);
+        if (len < 16) {
+          throw new Error("Decryption failed: chunk ciphertext is too short to be valid.");
+        }
+        if (scanOffset + 4 + 12 + len > combined.length) {
+          throw new Error("Decryption failed: payload is truncated (chunk data exceeds buffer).");
+        }
+        totalCiphertextBytes += len;
+        totalPlaintextBytes += len - 16;
+        if (totalPlaintextBytes > MAX_PLAINTEXT_BYTES) {
+          throw new Error("Decryption failed: payload exceeds maximum allowed plaintext size.");
+        }
+        scanOffset += 4 + 12 + len;
+      }
+    }
+
+    // Pre-allocate one flat buffer for the full plaintext. Chunks are written
+    // directly into it as they are decrypted — no intermediate array of parts
+    // and no second allocation needed, keeping peak memory bounded.
+    const fullPlaintext = new Uint8Array(totalPlaintextBytes);
+    let plaintextOffset = 0;
     let offset = 8;
-    const plaintextParts: Uint8Array[] = [];
+    let bytesDecrypted = 0;
 
     for (let i = 0; i < numChunks; i++) {
       if (offset + 4 > combined.length) {
@@ -183,20 +220,17 @@ export async function decryptPayload(
       const ciphertext = combined.slice(offset, offset + ciphertextLen);
       offset += ciphertextLen;
 
-      const plaintext = await crypto.subtle.decrypt(
+      const plaintextBuf = await crypto.subtle.decrypt(
         { name: "AES-GCM", iv },
         key,
         ciphertext
       );
-      plaintextParts.push(new Uint8Array(plaintext));
-    }
+      const chunk = new Uint8Array(plaintextBuf);
+      fullPlaintext.set(chunk, plaintextOffset);
+      plaintextOffset += chunk.byteLength;
 
-    const totalLength = plaintextParts.reduce((s, p) => s + p.byteLength, 0);
-    const fullPlaintext = new Uint8Array(totalLength);
-    let pos = 0;
-    for (const part of plaintextParts) {
-      fullPlaintext.set(part, pos);
-      pos += part.byteLength;
+      bytesDecrypted += ciphertextLen;
+      onProgress?.(bytesDecrypted, totalCiphertextBytes);
     }
 
     return JSON.parse(new TextDecoder().decode(fullPlaintext)) as SharePayload;

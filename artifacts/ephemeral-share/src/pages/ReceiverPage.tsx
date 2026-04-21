@@ -116,6 +116,7 @@ export default function ReceiverPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [zipProgress, setZipProgress] = useState(0);
   const [zipping, setZipping] = useState(false);
+  const [decryptProgress, setDecryptProgress] = useState(0);
 
   // hCaptcha state
   const [captchaToken, setCaptchaToken] = useState("");
@@ -376,6 +377,7 @@ export default function ReceiverPage() {
     salt: string | null
   ) => {
     setPhase("decrypting");
+    setDecryptProgress(0);
     try {
       // Accept either a GetShareData object (new path) or a raw ciphertext string (legacy).
       const encryptedData: string =
@@ -402,7 +404,9 @@ export default function ReceiverPage() {
         key = await importKeyFromBase64Url(keyFragment);
       }
 
-      const decrypted = await decryptPayload(encryptedData, key);
+      const decrypted = await decryptPayload(encryptedData, key, (done, total) => {
+        if (total > 0) setDecryptProgress(Math.round((done / total) * 100));
+      });
       setPayload(decrypted);
 
       if (decrypted.files && decrypted.files.length > 0) {
@@ -719,7 +723,14 @@ export default function ReceiverPage() {
             <motion.div key="decrypting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-center space-y-4">
               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                 className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto" />
-              <div className="font-mono text-sm text-muted-foreground">Decrypting...</div>
+              <div className="font-mono text-sm text-muted-foreground">
+                {decryptProgress > 0 ? `Decrypting… ${decryptProgress}%` : "Decrypting..."}
+              </div>
+              {decryptProgress > 0 && (
+                <div className="max-w-xs mx-auto">
+                  <ProgressBar value={decryptProgress} />
+                </div>
+              )}
             </motion.div>
           )}
 
