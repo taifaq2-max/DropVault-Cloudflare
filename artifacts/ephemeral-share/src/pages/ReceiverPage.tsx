@@ -123,6 +123,9 @@ export default function ReceiverPage() {
   const captchaRef = useRef<HCaptcha>(null);
   const captchaTheme: "dark" | "light" = theme === "dark" ? "dark" : "light";
 
+  // True while the initial token-less pre-check is in flight on the captcha page
+  const [preCheckLoading, setPreCheckLoading] = useState(() => !!HCAPTCHA_SITE_KEY);
+
   // Nonce issued by the peek endpoint — required by the access endpoint
   const [accessNonce, setAccessNonce] = useState("");
 
@@ -179,18 +182,25 @@ export default function ReceiverPage() {
   useEffect(() => {
     if (phase !== "captcha") return;
     let cancelled = false;
-    fetchPeek().catch((err: unknown) => {
-      if (cancelled) return;
-      const anyErr = err as { status?: number; data?: { error?: string } };
-      if (anyErr?.status === 404 && anyErr?.data?.error === "not_found") {
-        setPhase("share_expired");
-      } else if (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed") {
-        setPhase("share_consumed");
-      } else if (anyErr?.status === 410) {
-        setPhase("share_expired");
-      }
-      // captcha_required / captcha_failed / other errors → share exists, stay on captcha gate
-    });
+    setPreCheckLoading(true);
+    fetchPeek()
+      .then(() => {
+        if (!cancelled) setPreCheckLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const anyErr = err as { status?: number; data?: { error?: string } };
+        if (anyErr?.status === 404 && anyErr?.data?.error === "not_found") {
+          setPhase("share_expired");
+        } else if (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed") {
+          setPhase("share_consumed");
+        } else if (anyErr?.status === 410) {
+          setPhase("share_expired");
+        } else {
+          // captcha_required / captcha_failed / other errors → share exists, stay on captcha gate
+          setPreCheckLoading(false);
+        }
+      });
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -538,29 +548,57 @@ export default function ReceiverPage() {
                 <div className="font-mono text-xs uppercase tracking-widest text-muted-foreground">Human Verification</div>
                 <p className="text-muted-foreground font-mono text-sm">Please complete the check below to access this share.</p>
               </div>
-              <div className="flex justify-center" aria-label="Human verification">
-                <HCaptcha
-                  ref={captchaRef}
-                  sitekey={HCAPTCHA_SITE_KEY!}
-                  theme={captchaTheme}
-                  onVerify={(token) => { setCaptchaToken(token); setCaptchaGateError(""); }}
-                  onExpire={() => setCaptchaToken("")}
-                  onError={() => setCaptchaToken("")}
-                />
-              </div>
-              {captchaGateError && (
-                <p className="text-sm font-mono text-destructive" role="alert">
-                  {captchaGateError}
-                </p>
-              )}
-              <Button
-                onClick={handlePeekWithCaptcha}
-                disabled={!captchaToken || peekLoading}
-                className="w-full font-mono shadow-[0_0_16px_rgba(0,255,255,0.2)]"
-                aria-label="Continue to access share"
+
+              {/* Subtle pre-check loading indicator */}
+              <AnimatePresence>
+                {preCheckLoading && (
+                  <motion.div
+                    key="precheck"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="flex items-center justify-center gap-2 text-muted-foreground"
+                    aria-live="polite"
+                    aria-label="Checking share validity"
+                  >
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+                      className="w-4 h-4 border border-primary border-t-transparent rounded-full"
+                    />
+                    <span className="font-mono text-xs">Checking share...</span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div
+                className={preCheckLoading ? "opacity-40 pointer-events-none select-none" : ""}
+                aria-hidden={preCheckLoading}
               >
-                {peekLoading ? "Verifying..." : "Continue"}
-              </Button>
+                <div className="flex justify-center" aria-label="Human verification">
+                  <HCaptcha
+                    ref={captchaRef}
+                    sitekey={HCAPTCHA_SITE_KEY!}
+                    theme={captchaTheme}
+                    onVerify={(token) => { setCaptchaToken(token); setCaptchaGateError(""); }}
+                    onExpire={() => setCaptchaToken("")}
+                    onError={() => setCaptchaToken("")}
+                  />
+                </div>
+                {captchaGateError && (
+                  <p className="text-sm font-mono text-destructive mt-4" role="alert">
+                    {captchaGateError}
+                  </p>
+                )}
+                <Button
+                  onClick={handlePeekWithCaptcha}
+                  disabled={!captchaToken || peekLoading || preCheckLoading}
+                  className="w-full font-mono shadow-[0_0_16px_rgba(0,255,255,0.2)] mt-8"
+                  aria-label="Continue to access share"
+                >
+                  {peekLoading ? "Verifying..." : "Continue"}
+                </Button>
+              </div>
             </motion.div>
           )}
 
