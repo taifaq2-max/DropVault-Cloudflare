@@ -443,6 +443,92 @@ describe("ReceiverPage — captcha submission flow", () => {
     expect(screen.queryByLabelText(/checking share status/i)).not.toBeInTheDocument();
   });
 
+  it("captcha_error response, delayed re-check resolves to already_accessed → spinner gone, consumed UI shown", async () => {
+    let resolveReCheck!: (value: Response) => void;
+    const reCheckPromise = new Promise<Response>((resolve) => {
+      resolveReCheck = resolve;
+    });
+
+    let tokenlessCalls = 0;
+    mockFetch.mockImplementation((url: string) => {
+      if ((url as string).includes("captchaToken=")) {
+        return Promise.resolve(mockResponse(400, { error: "captcha_error" }));
+      }
+      tokenlessCalls++;
+      if (tokenlessCalls === 1) {
+        return Promise.resolve(mockResponse(403, { error: "captcha_required" }));
+      }
+      return reCheckPromise;
+    });
+
+    render(React.createElement(ReceiverPage));
+
+    await waitFor(() => expect(screen.getByTestId("hcaptcha-widget")).toBeInTheDocument());
+
+    await act(async () => { fireEvent.click(screen.getByTestId("hcaptcha-widget")); });
+
+    const continueBtn = await screen.findByRole("button", { name: /continue to access share/i });
+
+    act(() => { fireEvent.click(continueBtn); });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/checking share status/i)).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      resolveReCheck(mockResponse(410, { error: "already_accessed" }));
+      await reCheckPromise;
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/already been accessed|already accessed|one-time|consumed/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText(/checking share status/i)).not.toBeInTheDocument();
+  });
+
+  it("captcha_error response, delayed re-check resolves to not_found → spinner gone, expired UI shown", async () => {
+    let resolveReCheck!: (value: Response) => void;
+    const reCheckPromise = new Promise<Response>((resolve) => {
+      resolveReCheck = resolve;
+    });
+
+    let tokenlessCalls = 0;
+    mockFetch.mockImplementation((url: string) => {
+      if ((url as string).includes("captchaToken=")) {
+        return Promise.resolve(mockResponse(400, { error: "captcha_error" }));
+      }
+      tokenlessCalls++;
+      if (tokenlessCalls === 1) {
+        return Promise.resolve(mockResponse(403, { error: "captcha_required" }));
+      }
+      return reCheckPromise;
+    });
+
+    render(React.createElement(ReceiverPage));
+
+    await waitFor(() => expect(screen.getByTestId("hcaptcha-widget")).toBeInTheDocument());
+
+    await act(async () => { fireEvent.click(screen.getByTestId("hcaptcha-widget")); });
+
+    const continueBtn = await screen.findByRole("button", { name: /continue to access share/i });
+
+    act(() => { fireEvent.click(continueBtn); });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/checking share status/i)).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      resolveReCheck(mockResponse(404, { error: "not_found" }));
+      await reCheckPromise;
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/this share has expired/i).length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByLabelText(/checking share status/i)).not.toBeInTheDocument();
+  });
+
   it("captcha submission returns 410 already_accessed → transitions to share_consumed", async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes("captchaToken=")) {
