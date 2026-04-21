@@ -249,13 +249,47 @@ router.get("/shares/:shareId/peek", async (req: Request, res: Response) => {
     return;
   }
 
+  // Check share existence/state BEFORE captcha so that clients can learn the
+  // share is gone (404/410) without needing to solve the captcha first.
+  // This allows the captcha gate to pre-check validity on page load.
+  const shareEarly = getShare(shareId);
+
+  if (!shareEarly) {
+    res.status(404).json({
+      error: "not_found",
+      message: "Share not found or expired",
+      humorousMessage: randomHumorous(),
+    });
+    return;
+  }
+
+  const nowEarly = Date.now();
+  if (nowEarly > shareEarly.expiresAt) {
+    deleteShare(shareId);
+    res.status(410).json({
+      error: "expired",
+      message: "Share has expired",
+      humorousMessage: "No droids here",
+    });
+    return;
+  }
+
+  if (shareEarly.accessed) {
+    res.status(410).json({
+      error: "already_accessed",
+      message: "Share already accessed",
+      humorousMessage: "There is no cake",
+    });
+    return;
+  }
+
   // hCaptcha verification (skipped when HCAPTCHA_SECRET_KEY is not configured)
   if (HCAPTCHA_SECRET) {
     const token = req.query["captchaToken"];
     if (!token || typeof token !== "string") {
       res.status(400).json({
-        error: "captcha_failed",
-        message: "CAPTCHA validation failed. Please try again.",
+        error: "captcha_required",
+        message: "CAPTCHA validation required.",
       });
       return;
     }
@@ -277,34 +311,21 @@ router.get("/shares/:shareId/peek", async (req: Request, res: Response) => {
     }
   }
 
+  // Re-fetch after captcha to guard against a race where the share was consumed
+  // between the early existence check and now.
   const share = getShare(shareId);
 
   if (!share) {
-    res.status(404).json({
-      error: "not_found",
-      message: "Share not found or expired",
-      humorousMessage: randomHumorous(),
-    });
+    res.status(404).json({ error: "not_found", message: "Share not found or expired", humorousMessage: randomHumorous() });
     return;
   }
-
-  const now = Date.now();
-  if (now > share.expiresAt) {
-    deleteShare(shareId);
-    res.status(410).json({
-      error: "expired",
-      message: "Share has expired",
-      humorousMessage: "No droids here",
-    });
-    return;
-  }
-
   if (share.accessed) {
-    res.status(410).json({
-      error: "already_accessed",
-      message: "Share already accessed",
-      humorousMessage: "There is no cake",
-    });
+    res.status(410).json({ error: "already_accessed", message: "Share already accessed", humorousMessage: "There is no cake" });
+    return;
+  }
+  if (Date.now() > share.expiresAt) {
+    deleteShare(shareId);
+    res.status(410).json({ error: "expired", message: "Share has expired", humorousMessage: "No droids here" });
     return;
   }
 

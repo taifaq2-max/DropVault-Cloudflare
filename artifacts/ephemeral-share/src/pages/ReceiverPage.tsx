@@ -174,6 +174,27 @@ export default function ReceiverPage() {
 
   const [peekLoading, setPeekLoading] = useState(false);
 
+  // When the captcha gate first appears, do a token-less pre-check so users
+  // learn immediately if the share is already gone — before solving the widget.
+  useEffect(() => {
+    if (phase !== "captcha") return;
+    let cancelled = false;
+    fetchPeek().catch((err: unknown) => {
+      if (cancelled) return;
+      const anyErr = err as { status?: number; data?: { error?: string } };
+      if (anyErr?.status === 404 && anyErr?.data?.error === "not_found") {
+        setPhase("share_expired");
+      } else if (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed") {
+        setPhase("share_consumed");
+      } else if (anyErr?.status === 410) {
+        setPhase("share_expired");
+      }
+      // captcha_required / captcha_failed / other errors → share exists, stay on captcha gate
+    });
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handlePeekWithCaptcha = async () => {
     if (!captchaToken) return;
     setPeekLoading(true);
@@ -187,14 +208,21 @@ export default function ReceiverPage() {
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       const anyErr = err as { status?: number; data?: { error?: string; humorousMessage?: string; message?: string } };
-      if (anyErr?.data?.error === "captcha_failed") {
+      const errCode = anyErr?.data?.error;
+      if (errCode === "captcha_failed" || errCode === "captcha_error" || errCode === "captcha_required") {
         // Stay on the captcha screen — show a retry message instead of the error page
         setCaptchaGateError("Verification failed. Please complete the captcha again.");
-      } else if (anyErr?.status === 404 && anyErr?.data?.error === "not_found") {
+      } else if (anyErr?.status === 404 && errCode === "not_found") {
+        setCaptchaGateError("");
         setPhase("share_expired");
-      } else if (anyErr?.status === 410 && anyErr?.data?.error === "already_accessed") {
+      } else if (anyErr?.status === 410 && errCode === "already_accessed") {
+        setCaptchaGateError("");
         setPhase("share_consumed");
+      } else if (anyErr?.status === 410) {
+        setCaptchaGateError("");
+        setPhase("share_expired");
       } else {
+        setCaptchaGateError("");
         setErrorMessage(
           anyErr?.data?.humorousMessage ??
             anyErr?.data?.message ??
