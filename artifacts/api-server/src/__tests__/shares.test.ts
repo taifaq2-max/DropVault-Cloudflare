@@ -81,6 +81,26 @@ describe("GET /api/shares/:shareId/peek", () => {
     expect(peekAgain.status).toBe(200);
   });
 
+  it("returns 410 already_accessed after share is consumed — no captcha token needed (early check priority)", async () => {
+    // Create a share, consume it via the GET endpoint, then verify that peek returns
+    // already_accessed *without* a captcha token.  This is the contract the frontend
+    // re-check relies on: the server evaluates share state before captcha verification,
+    // so a consumed share always surfaces already_accessed regardless of captcha config.
+    const createRes = await request(app)
+      .post("/api/shares")
+      .send(VALID_SHARE_BODY);
+    expect(createRes.status).toBe(201);
+    const { shareId } = createRes.body as { shareId: string };
+
+    // Consume the share
+    await request(app).get(`/api/shares/${shareId}`);
+
+    // Tokenless re-peek (as the frontend re-check does) must return already_accessed
+    const peekRes = await request(app).get(`/api/shares/${shareId}/peek`);
+    expect(peekRes.status).toBe(410);
+    expect(peekRes.body.error).toBe("already_accessed");
+  });
+
   it("returns 404 for a nonexistent share", async () => {
     const res = await request(app).get("/api/shares/nonexistent-id-xyz/peek");
     expect(res.status).toBe(404);

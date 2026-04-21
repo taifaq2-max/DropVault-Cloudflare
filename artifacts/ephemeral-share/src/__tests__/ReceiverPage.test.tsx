@@ -231,6 +231,109 @@ describe("ReceiverPage — captcha submission flow", () => {
     });
   });
 
+  it("captcha_error response, re-check shows already_accessed → transitions to share_consumed", async () => {
+    let tokenlessCalls = 0;
+    mockFetch.mockImplementation((url: string) => {
+      if ((url as string).includes("captchaToken=")) {
+        return Promise.resolve(mockResponse(400, { error: "captcha_error" }));
+      }
+      tokenlessCalls++;
+      if (tokenlessCalls === 1) {
+        // pre-check on captcha mount → share exists, stay on captcha gate
+        return Promise.resolve(mockResponse(400, { error: "captcha_required" }));
+      }
+      // re-check after captcha_error → share was consumed in the meantime
+      return Promise.resolve(mockResponse(410, { error: "already_accessed" }));
+    });
+
+    render(React.createElement(ReceiverPage));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hcaptcha-widget")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("hcaptcha-widget"));
+    });
+
+    const continueBtn = await screen.findByRole("button", { name: /continue to access share/i });
+
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/already been accessed|already accessed|one-time|consumed/i)).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("captcha_error response, re-check shows not_found → transitions to share_expired", async () => {
+    let tokenlessCalls = 0;
+    mockFetch.mockImplementation((url: string) => {
+      if ((url as string).includes("captchaToken=")) {
+        return Promise.resolve(mockResponse(400, { error: "captcha_error" }));
+      }
+      tokenlessCalls++;
+      if (tokenlessCalls === 1) {
+        return Promise.resolve(mockResponse(400, { error: "captcha_required" }));
+      }
+      return Promise.resolve(mockResponse(404, { error: "not_found" }));
+    });
+
+    render(React.createElement(ReceiverPage));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hcaptcha-widget")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("hcaptcha-widget"));
+    });
+
+    const continueBtn = await screen.findByRole("button", { name: /continue to access share/i });
+
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText(/this share has expired/i).length).toBeGreaterThan(0);
+    });
+  });
+
+  it("captcha_error response, re-check still returns captcha_required → stays on captcha with retry message", async () => {
+    mockFetch.mockImplementation((url: string) => {
+      if ((url as string).includes("captchaToken=")) {
+        return Promise.resolve(mockResponse(400, { error: "captcha_error" }));
+      }
+      return Promise.resolve(mockResponse(400, { error: "captcha_required" }));
+    });
+
+    render(React.createElement(ReceiverPage));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hcaptcha-widget")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId("hcaptcha-widget"));
+    });
+
+    const continueBtn = await screen.findByRole("button", { name: /continue to access share/i });
+
+    await act(async () => {
+      fireEvent.click(continueBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/verification failed/i);
+    });
+
+    expect(screen.getByText(/Human Verification/i)).toBeInTheDocument();
+  });
+
   it("captcha submission with captcha_failed response → stays on captcha with error message", async () => {
     mockFetch.mockImplementation((url: string) => {
       if (url.includes("captchaToken=")) {

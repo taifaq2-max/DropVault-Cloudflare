@@ -210,6 +210,33 @@ export default function ReceiverPage() {
       const anyErr = err as { status?: number; data?: { error?: string; humorousMessage?: string; message?: string } };
       const errCode = anyErr?.data?.error;
       if (errCode === "captcha_failed" || errCode === "captcha_error" || errCode === "captcha_required") {
+        // The captcha verification itself failed — but the share may have been consumed in the
+        // meantime (race condition or a failing hcaptcha network call after the early share check).
+        // Do a quick tokenless re-peek so we surface the correct error instead of looping the user
+        // on the captcha retry screen when the share is already gone.
+        try {
+          await fetchPeek();
+          // Re-peek succeeded (share still exists and no captcha on tokenless path) — fall through
+          // to the retry message.
+        } catch (reCheckErr: unknown) {
+          const rc = reCheckErr as { status?: number; data?: { error?: string } };
+          if (rc?.status === 410 && rc?.data?.error === "already_accessed") {
+            setCaptchaGateError("");
+            setPhase("share_consumed");
+            return;
+          }
+          if (rc?.status === 404 && rc?.data?.error === "not_found") {
+            setCaptchaGateError("");
+            setPhase("share_expired");
+            return;
+          }
+          if (rc?.status === 410) {
+            setCaptchaGateError("");
+            setPhase("share_expired");
+            return;
+          }
+          // captcha_required or other errors → share still exists, continue to retry message
+        }
         // Stay on the captcha screen — show a retry message instead of the error page
         setCaptchaGateError("Verification failed. Please complete the captcha again.");
       } else if (anyErr?.status === 404 && errCode === "not_found") {
