@@ -13,10 +13,12 @@ export default defineConfig({
   define: {
     "import.meta.env.BASE_URL": JSON.stringify("/"),
     "import.meta.env.VITE_HCAPTCHA_SITE_KEY": JSON.stringify("test-site-key"),
+    "import.meta.env.VITE_USE_R2_UPLOADS": JSON.stringify("true"),
   },
   test: {
     environment: "jsdom",
     setupFiles: ["src/__tests__/setup.ts"],
     globals: true,
+    exclude: ["**/node_modules/**", "**/dist/**", "**/e2e/**"],
   },
 });
