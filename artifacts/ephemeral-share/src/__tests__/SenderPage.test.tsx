@@ -452,6 +452,47 @@ describe("SenderPage — R2 upload retry flow", () => {
     vi.restoreAllMocks();
   });
 
+  it("shows the captcha-required warning and keeps Retry Upload visible when clicking Retry before solving the captcha after URL expiry (file-upload mode)", async () => {
+    const realDateNow = Date.now();
+
+    await renderInFilesMode("example.txt");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    // Wait for the Retry Upload button — first PUT returned 500, captcha token cleared.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+    });
+
+    // Advance time past the presigned URL expiry window (> 870 s forward).
+    vi.spyOn(Date, "now").mockReturnValue(realDateNow + 871_000);
+
+    // Do NOT solve the captcha widget — captchaToken remains "".
+
+    // Click Retry Upload without a valid captcha token.
+    const retryBtn = screen.getByRole("button", { name: /retry upload/i });
+    await act(async () => {
+      fireEvent.click(retryBtn);
+    });
+
+    // The gate should fire and show the instructional warning.
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Your upload window has expired. Please complete the verification above, then click Retry Upload."
+    );
+
+    // Retry Upload button must still be present so the user can try again after solving captcha.
+    expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+
+    vi.restoreAllMocks();
+  });
+
   it("keeps the Retry Upload button available when the retried upload also fails", async () => {
     xhrResponseQueue = [500, 500];
 
