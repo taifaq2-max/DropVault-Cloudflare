@@ -28,7 +28,7 @@ export default defineConfig({
     {
       command: `pnpm dev`,
       url: `http://localhost:${E2E_PORT}`,
-      reuseExistingServer: false,
+      reuseExistingServer: !process.env.CI,
       timeout: 30_000,
       env: {
         PORT: String(E2E_PORT),
@@ -41,13 +41,13 @@ export default defineConfig({
     {
       command: `pnpm dev`,
       url: `http://localhost:${CAPTCHA_E2E_PORT}`,
-      reuseExistingServer: false,
+      reuseExistingServer: !process.env.CI,
       timeout: 30_000,
       env: {
         PORT: String(CAPTCHA_E2E_PORT),
         BASE_PATH: "/",
         VITE_USE_R2_UPLOADS: "true",
-        VITE_HCAPTCHA_SITE_KEY: "test-captcha-key",
+        VITE_HCAPTCHA_SITE_KEY: "10000000-ffff-ffff-ffff-000000000001",
         NODE_ENV: "test",
       },
     },
