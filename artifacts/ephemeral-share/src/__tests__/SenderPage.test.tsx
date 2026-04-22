@@ -614,6 +614,33 @@ describe("SenderPage — R2 upload retry flow", () => {
     expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/share link/i)).not.toBeInTheDocument();
   });
+
+  it("keeps the Retry Upload button available when the retried file upload also fails", async () => {
+    xhrResponseQueue = [500, 500];
+
+    await renderInFilesMode("example.txt");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+    });
+
+    const retryBtn = screen.getByRole("button", { name: /retry upload/i });
+    await act(async () => {
+      fireEvent.click(retryBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/share link/i)).not.toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
