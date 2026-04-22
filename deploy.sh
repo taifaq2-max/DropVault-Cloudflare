@@ -5,7 +5,7 @@
 # Usage:  bash deploy.sh
 # Run from the repository root.  No prior Cloudflare knowledge required.
 # =============================================================================
-set -uo pipefail
+set -euo pipefail
 IFS=$'\n\t'
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +28,16 @@ error()   { echo -e "${RED}  ✖${NC}  $*" >&2; }
 header()  { echo -e "\n${BOLD}${BLUE}━━  $*${NC}"; }
 die()     { error "$*"; exit 1; }
 
-# Portable sed -i (macOS requires an empty string argument)
+# run_step: run a command and exit loudly on failure
+run_step() {
+  local label="$1"; shift
+  info "$label"
+  if ! "$@"; then
+    die "$label FAILED (exit $?)."
+  fi
+}
+
+# Portable sed -i (macOS requires an empty-string arg; Linux does not)
 sedi() {
   if [[ "$(uname)" == "Darwin" ]]; then
     sed -i '' "$@"
@@ -36,9 +45,6 @@ sedi() {
     sed -i "$@"
   fi
 }
-
-# Extract the first 32-char hex ID from a string (Cloudflare resource IDs)
-extract_cf_id() { echo "$1" | grep -oE '[a-f0-9]{32}' | head -1; }
 
 # ── 1. Prerequisite checks ───────────────────────────────────────────────────
 header "Checking prerequisites"
@@ -76,7 +82,7 @@ elif command -v wrangler &>/dev/null; then
 fi
 
 if [[ -z "$WRANGLER" ]]; then
-  error "wrangler not found. Run: pnpm install  (from repo root)"
+  error "wrangler not found. Run: pnpm install  (from repo root), then rerun."
   MISSING=1
 else
   success "wrangler  $($WRANGLER --version 2>/dev/null | head -1)"
@@ -134,8 +140,8 @@ PAGES_PROJECT="${PAGES_PROJECT// /}"
 echo
 echo "  Routing options:"
 echo "    A) Custom domain + Worker Routes  (recommended; requires a domain on Cloudflare)"
-echo "       /api/* is served by the Worker at the same origin — no VITE_API_URL needed."
-echo "    B) Pages Function proxy  (no custom domain; works out of the box with *.pages.dev)"
+echo "       /api/* is served by the Worker at the same origin — no cross-origin calls."
+echo "    B) Pages Function proxy  (no custom domain; works with *.pages.dev)"
 echo "       The included Pages Function forwards /api/* to the Worker."
 echo
 read -r -p "  Routing option [B]: " ROUTING_OPTION
@@ -154,11 +160,14 @@ fi
 
 # SESSION_SECRET
 echo
-read -rs -p "  SESSION_SECRET (Enter to auto-generate): " SESSION_SECRET; echo
-if [[ -z "$SESSION_SECRET" ]]; then
+read -rs -p "  SESSION_SECRET (Enter to auto-generate): " SESSION_SECRET_IN; echo
+if [[ -z "$SESSION_SECRET_IN" ]]; then
   SESSION_SECRET=$(openssl rand -hex 64)
   info "Auto-generated SESSION_SECRET."
+else
+  SESSION_SECRET="$SESSION_SECRET_IN"
 fi
+unset SESSION_SECRET_IN
 
 # hCaptcha
 echo
@@ -190,170 +199,184 @@ info "All inputs collected.  Starting deployment…"
 # ── 3. Install dependencies ──────────────────────────────────────────────────
 header "Installing dependencies"
 cd "$REPO_ROOT"
-pnpm install 2>&1 | tail -3
+run_step "pnpm install" pnpm install
 success "Dependencies ready"
 
-# ── 4. KV namespace provisioning ────────────────────────────────────────────
+# ── 4. Patch worker name in wrangler.toml BEFORE any wrangler commands ───────
+#       (wrangler derives KV namespace titles from the name in wrangler.toml)
+header "Patching wrangler.toml"
+sedi "s|^name = \"vaultdrop-api\"|name = \"$WORKER_NAME\"|" "$WRANGLER_TOML"
+sedi "s|CLOUDFLARE_ACCOUNT_ID = \"\"|CLOUDFLARE_ACCOUNT_ID = \"$CF_ACCOUNT_ID\"|g" "$WRANGLER_TOML"
+sedi "s|bucket_name = \"vaultdrop-shares\"|bucket_name = \"$R2_BUCKET\"|g" "$WRANGLER_TOML"
+sedi "s|R2_BUCKET_NAME = \"vaultdrop-shares\"|R2_BUCKET_NAME = \"$R2_BUCKET\"|g" "$WRANGLER_TOML"
+if [[ "$ROUTING_OPTION" == "A" ]]; then
+  sedi "s|^FRONTEND_URL = \"\"|FRONTEND_URL = \"$FRONTEND_URL\"|" "$WRANGLER_TOML"
+fi
+success "wrangler.toml patched (worker name, account ID, bucket)"
+
+# ── 5. KV namespace provisioning ────────────────────────────────────────────
 header "Provisioning KV namespaces"
 
-# Helper: get or create a KV namespace; echoes the 32-char hex ID.
+# Returns the 32-char hex ID for a KV namespace, creating it if needed.
 provision_kv() {
   local binding="$1"         # e.g. SHARE_KV
   local preview="${2:-false}" # "true" | "false"
+
+  # wrangler derives the namespace title as "<worker_name>-<binding>[_preview]"
   local title="${WORKER_NAME}-${binding}"
   [[ "$preview" == "true" ]] && title="${title}_preview"
 
-  # Attempt creation
   local create_args=("$binding")
   [[ "$preview" == "true" ]] && create_args+=("--preview")
-  local out
+
+  local out id
+  # Attempt creation (may fail if namespace already exists — that's OK)
   out=$(cd "$CF_DIR" && $WRANGLER kv namespace create "${create_args[@]}" 2>&1) || true
 
-  # Try to extract the ID from the create output (TOML "id = '...'" line)
-  local id
-  id=$(echo "$out" | grep -E '^\s*id\s*=' | head -1 | grep -oE '[a-f0-9]{32}' | head -1)
+  # Parse the "id = '...'" line from wrangler's TOML-snippet output
+  id=$(echo "$out" | grep -E "^\s*id\s*=" | head -1 | grep -oE '[a-f0-9]{32}' | head -1 || true)
 
   if [[ -z "$id" ]]; then
-    # Creation may have failed because the namespace already exists.
-    # Fall back to listing namespaces and matching by title.
-    info "  Namespace '$title' may already exist — looking up ID from list…"
+    # Fall back: list all namespaces and match by title
+    info "  '$title' may already exist — scanning namespace list for its ID…"
     local list_out
     list_out=$(cd "$CF_DIR" && $WRANGLER kv namespace list 2>&1) || true
-    # The list output is a table or JSON; try both formats.
-    # Table row contains the title and ID on the same line (title | id).
-    id=$(echo "$list_out" | grep -F "$title" | grep -oE '[a-f0-9]{32}' | head -1)
+    # Works for both table (│ title │ id │) and JSON ([{"title":"...","id":"..."}]) output
+    id=$(echo "$list_out" | grep -F "$title" | grep -oE '[a-f0-9]{32}' | head -1 || true)
   fi
 
   if [[ -z "$id" ]]; then
-    error "Could not determine KV namespace ID for '$title'."
+    error "Could not determine ID for KV namespace '$title'."
     error "wrangler output was:"
     echo "$out" >&2
-    die "Please create the namespace manually and update wrangler.toml."
+    die "Please create the namespace manually and update wrangler.toml, then rerun."
   fi
 
   echo "$id"
 }
 
 KV_ID=$(provision_kv "SHARE_KV" "false")
-success "Production KV namespace ID: $KV_ID"
+success "Production KV ID: $KV_ID"
 
 KV_PREVIEW_ID=$(provision_kv "SHARE_KV" "true")
-success "Preview KV namespace ID:    $KV_PREVIEW_ID"
+success "Preview KV ID:    $KV_PREVIEW_ID"
 
-# Patch wrangler.toml — replace placeholder strings
 sedi "s|REPLACE_WITH_YOUR_KV_NAMESPACE_ID|$KV_ID|g" "$WRANGLER_TOML"
 sedi "s|REPLACE_WITH_YOUR_KV_NAMESPACE_PREVIEW_ID|$KV_PREVIEW_ID|g" "$WRANGLER_TOML"
-success "wrangler.toml patched with KV namespace IDs"
+success "wrangler.toml KV IDs patched"
 
-# ── 5. R2 bucket + wrangler.toml vars ────────────────────────────────────────
+# ── 6. R2 bucket provisioning ─────────────────────────────────────────────────
 header "Provisioning R2 bucket"
 
-info "Creating R2 bucket '$R2_BUCKET' (skipped if it already exists)…"
+info "Creating R2 bucket '$R2_BUCKET' (no-op if it already exists)…"
+# R2 bucket creation is idempotent — a non-zero exit just means it already exists
 cd "$CF_DIR" && $WRANGLER r2 bucket create "$R2_BUCKET" 2>&1 || \
-  warn "Bucket creation returned non-zero — it may already exist, continuing."
+  warn "  Bucket creation returned non-zero — it likely already exists, continuing."
 success "R2 bucket '$R2_BUCKET' ready"
 
-# Patch wrangler.toml — worker name, account ID, bucket name, FRONTEND_URL (Option A)
-sedi "s|^name = \"vaultdrop-api\"|name = \"$WORKER_NAME\"|" "$WRANGLER_TOML"
-sedi "s|CLOUDFLARE_ACCOUNT_ID = \"\"|CLOUDFLARE_ACCOUNT_ID = \"$CF_ACCOUNT_ID\"|g" "$WRANGLER_TOML"
-sedi "s|bucket_name = \"vaultdrop-shares\"|bucket_name = \"$R2_BUCKET\"|g" "$WRANGLER_TOML"
-# Also update the [vars] R2_BUCKET_NAME in case it differs
-sedi "s|R2_BUCKET_NAME = \"vaultdrop-shares\"|R2_BUCKET_NAME = \"$R2_BUCKET\"|g" "$WRANGLER_TOML"
-
-if [[ "$ROUTING_OPTION" == "A" ]]; then
-  sedi "s|^FRONTEND_URL = \"\"|FRONTEND_URL = \"$FRONTEND_URL\"|" "$WRANGLER_TOML"
-  success "FRONTEND_URL set to $FRONTEND_URL in wrangler.toml"
-fi
-
-success "wrangler.toml updated"
-
-# ── 6. Worker secrets ─────────────────────────────────────────────────────────
+# ── 7. Worker secrets ─────────────────────────────────────────────────────────
 header "Setting Worker secrets"
-
 cd "$CF_DIR"
 
 pipe_secret() {
   local name="$1" value="$2"
-  echo "$value" | $WRANGLER secret put "$name" 2>&1 | tail -1
+  if ! echo "$value" | $WRANGLER secret put "$name" 2>&1; then
+    die "Failed to set secret '$name'."
+  fi
   success "  $name set"
 }
 
 pipe_secret "SESSION_SECRET"      "$SESSION_SECRET"
-[[ -n "$HCAPTCHA_SECRET_KEY" ]]  && pipe_secret "HCAPTCHA_SECRET_KEY"  "$HCAPTCHA_SECRET_KEY"
-[[ -n "$R2_KEY_ID" ]]            && pipe_secret "R2_ACCESS_KEY_ID"     "$R2_KEY_ID"
-[[ -n "$R2_KEY_SECRET" ]]        && pipe_secret "R2_ACCESS_KEY_SECRET" "$R2_KEY_SECRET"
+[[ -n "$HCAPTCHA_SECRET_KEY" ]] && pipe_secret "HCAPTCHA_SECRET_KEY"  "$HCAPTCHA_SECRET_KEY"
+[[ -n "$R2_KEY_ID" ]]           && pipe_secret "R2_ACCESS_KEY_ID"     "$R2_KEY_ID"
+[[ -n "$R2_KEY_SECRET" ]]       && pipe_secret "R2_ACCESS_KEY_SECRET" "$R2_KEY_SECRET"
 
-# ── 7. Deploy Worker ──────────────────────────────────────────────────────────
+# ── 8. Deploy Worker ──────────────────────────────────────────────────────────
 header "Deploying Worker"
-
 cd "$CF_DIR"
-DEPLOY_OUT=$($WRANGLER deploy 2>&1)
+
+DEPLOY_OUT=""
+if ! DEPLOY_OUT=$($WRANGLER deploy 2>&1); then
+  echo "$DEPLOY_OUT" >&2
+  die "Worker deployment failed."
+fi
 echo "$DEPLOY_OUT" | tail -6
 
-WORKER_URL=$(echo "$DEPLOY_OUT" | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' | head -1)
+WORKER_URL=$(echo "$DEPLOY_OUT" | grep -oE 'https://[a-zA-Z0-9._-]+\.workers\.dev' | head -1 || true)
 if [[ -z "$WORKER_URL" ]]; then
   WORKER_URL="https://${WORKER_NAME}.${CF_ACCOUNT_ID}.workers.dev"
-  warn "Could not auto-detect Worker URL from output — using: $WORKER_URL"
+  warn "Could not auto-detect Worker URL — using: $WORKER_URL"
 fi
 success "Worker live at: $WORKER_URL"
 
-# ── 8. Frontend build ─────────────────────────────────────────────────────────
+# ── 9. Frontend build ─────────────────────────────────────────────────────────
 header "Building frontend"
-
 cd "$REPO_ROOT"
 
-# Inject VITE_* build-time env vars
-[[ -n "$HCAPTCHA_SITE_KEY" ]]  && export VITE_HCAPTCHA_SITE_KEY="$HCAPTCHA_SITE_KEY"
-[[ "$ENABLE_R2" == "Y" ]]      && export VITE_USE_R2_UPLOADS="true"
+[[ -n "$HCAPTCHA_SITE_KEY" ]] && export VITE_HCAPTCHA_SITE_KEY="$HCAPTCHA_SITE_KEY"
+[[ "$ENABLE_R2" == "Y" ]]     && export VITE_USE_R2_UPLOADS="true"
 
-pnpm --filter @workspace/ephemeral-share run build 2>&1 | tail -5
+if ! pnpm --filter @workspace/ephemeral-share run build 2>&1; then
+  die "Frontend build failed."
+fi
 success "Frontend built → artifacts/ephemeral-share/dist/public"
 
-# ── 9. Deploy to Cloudflare Pages ─────────────────────────────────────────────
+# ── 10. Deploy to Cloudflare Pages ────────────────────────────────────────────
 header "Deploying to Cloudflare Pages"
-
 cd "$REPO_ROOT"
-PAGES_OUT=$($WRANGLER pages deploy "$FE_DIR/dist/public" \
-  --project-name "$PAGES_PROJECT" 2>&1) || true
+
+PAGES_OUT=""
+if ! PAGES_OUT=$($WRANGLER pages deploy "$FE_DIR/dist/public" \
+    --project-name "$PAGES_PROJECT" 2>&1); then
+  echo "$PAGES_OUT" >&2
+  die "Pages deployment failed."
+fi
 echo "$PAGES_OUT" | tail -6
 
-PAGES_URL=$(echo "$PAGES_OUT" | grep -oE 'https://[a-zA-Z0-9._-]+\.pages\.dev' | head -1)
+PAGES_URL=$(echo "$PAGES_OUT" | grep -oE 'https://[a-zA-Z0-9._-]+\.pages\.dev' | head -1 || true)
 if [[ -z "$PAGES_URL" ]]; then
   PAGES_URL="https://${PAGES_PROJECT}.pages.dev"
   warn "Could not auto-detect Pages URL — using: $PAGES_URL"
 fi
 success "Frontend live at: $PAGES_URL"
 
-# ── 10. Option B: set FRONTEND_URL and redeploy Worker ───────────────────────
+# ── 11. Option B: back-fill FRONTEND_URL + redeploy Worker ───────────────────
 if [[ "$ROUTING_OPTION" == "B" ]]; then
   header "Updating Worker CORS origin (Option B)"
   FRONTEND_URL="$PAGES_URL"
   sedi "s|^FRONTEND_URL = \"\"|FRONTEND_URL = \"$FRONTEND_URL\"|" "$WRANGLER_TOML"
   info "Redeploying Worker with FRONTEND_URL=$FRONTEND_URL…"
-  cd "$CF_DIR" && $WRANGLER deploy 2>&1 | tail -3
-  success "Worker redeployed"
+  cd "$CF_DIR"
+  if ! $WRANGLER deploy 2>&1 | tail -3; then
+    die "Worker redeploy (CORS update) failed."
+  fi
+  success "Worker redeployed with updated CORS origin"
 fi
 
-# ── 11. Set Pages environment variables via REST API ──────────────────────────
+# ── 12. Set Pages environment variables via REST API ─────────────────────────
 header "Setting Pages environment variables"
 
-# Build the env_vars JSON object using python3 for safe escaping
-PAGES_ENV_JSON=$(python3 - <<PYEOF
-import json
+# Build env_vars JSON — python3 handles correct escaping of any input values
+PAGES_ENV_JSON=$(python3 - "$WORKER_URL" "$HCAPTCHA_SITE_KEY" "$ROUTING_OPTION" "$ENABLE_R2" <<'PYEOF'
+import json, sys
+worker_url, hcaptcha_site_key, routing, enable_r2 = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 
 env_vars = {}
 
-$(
-  if [[ "$ENABLE_R2" == "Y" ]]; then
-    echo 'env_vars["VITE_USE_R2_UPLOADS"] = {"value": "true"}'
-  fi
-  if [[ -n "$HCAPTCHA_SITE_KEY" ]]; then
-    printf 'env_vars["VITE_HCAPTCHA_SITE_KEY"] = {"value": %s}\n' "$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$HCAPTCHA_SITE_KEY")"
-  fi
-  if [[ "$ROUTING_OPTION" == "B" ]]; then
-    printf 'env_vars["WORKER_URL"] = {"value": %s, "type": "secret_text"}\n' "$(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$WORKER_URL")"
-  fi
-)
+# VITE_API_URL — set to Worker URL so the frontend knows where the API is.
+# For Option A/B routing (relative /api/* paths) this acts as an explicit
+# fallback; unset it in Pages settings if you want to rely purely on routing.
+env_vars["VITE_API_URL"] = {"value": worker_url}
+
+if enable_r2 == "Y":
+    env_vars["VITE_USE_R2_UPLOADS"] = {"value": "true"}
+
+if hcaptcha_site_key:
+    env_vars["VITE_HCAPTCHA_SITE_KEY"] = {"value": hcaptcha_site_key}
+
+# WORKER_URL is only needed for Option B (Pages Function proxy)
+if routing == "B":
+    env_vars["WORKER_URL"] = {"value": worker_url, "type": "secret_text"}
 
 body = {
     "deployment_configs": {
@@ -371,21 +394,22 @@ CF_PAGES_RESP=$(curl -s -X PATCH \
   -H "Content-Type: application/json" \
   -d "$PAGES_ENV_JSON")
 
-if python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if d.get('success') else 1)" <<< "$CF_PAGES_RESP" 2>/dev/null; then
+if python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if d.get('success') else 1)" \
+    <<< "$CF_PAGES_RESP" 2>/dev/null; then
   success "Pages environment variables updated"
 else
-  warn "Pages env var update may have failed. Raw response:"
+  warn "Pages env var update may have failed. Response:"
   python3 -m json.tool <<< "$CF_PAGES_RESP" 2>/dev/null || echo "$CF_PAGES_RESP"
   warn "Set them manually: Dashboard → Pages → $PAGES_PROJECT → Settings → Environment variables"
 fi
 
-# ── 12. R2 CORS policy ────────────────────────────────────────────────────────
+# ── 13. R2 CORS policy ────────────────────────────────────────────────────────
 if [[ -n "$R2_KEY_ID" && -n "$FRONTEND_URL" ]]; then
   header "Setting R2 CORS policy"
 
-  R2_CORS_JSON=$(python3 - <<PYEOF
-import json
-origin = $(python3 -c "import json,sys; print(json.dumps(sys.argv[1]))" "$FRONTEND_URL")
+  R2_CORS_JSON=$(python3 - "$FRONTEND_URL" <<'PYEOF'
+import json, sys
+origin = sys.argv[1]
 print(json.dumps([{
     "AllowedOrigins": [origin],
     "AllowedMethods": ["PUT"],
@@ -401,7 +425,8 @@ PYEOF
     -H "Content-Type: application/json" \
     -d "$R2_CORS_JSON")
 
-  if python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if d.get('success') else 1)" <<< "$CF_CORS_RESP" 2>/dev/null; then
+  if python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if d.get('success') else 1)" \
+      <<< "$CF_CORS_RESP" 2>/dev/null; then
     success "R2 CORS policy set (PUT allowed from $FRONTEND_URL)"
   else
     warn "R2 CORS policy update may have failed:"
@@ -410,15 +435,17 @@ PYEOF
   fi
 fi
 
-# ── 13. Redeploy Pages with updated env vars ──────────────────────────────────
+# ── 14. Final Pages redeploy with updated env vars ────────────────────────────
 header "Final Pages redeploy"
-info "Redeploying frontend so env vars take effect…"
+info "Redeploying frontend so the new environment variables take effect…"
 cd "$REPO_ROOT"
-$WRANGLER pages deploy "$FE_DIR/dist/public" \
-  --project-name "$PAGES_PROJECT" 2>&1 | tail -4
+if ! $WRANGLER pages deploy "$FE_DIR/dist/public" \
+    --project-name "$PAGES_PROJECT" 2>&1 | tail -4; then
+  die "Final Pages redeploy failed."
+fi
 success "Frontend redeployed with updated environment"
 
-# ── 14. Summary ───────────────────────────────────────────────────────────────
+# ── 15. Summary ───────────────────────────────────────────────────────────────
 echo
 echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BOLD}${GREEN}║       VaultDrop deployed successfully!                   ║${NC}"
@@ -441,8 +468,8 @@ if [[ "$ROUTING_OPTION" == "A" ]]; then
   echo -e "       CNAME  $CUSTOM_DOMAIN  →  ${PAGES_PROJECT}.pages.dev"
   echo -e "    2. Add a Worker Route in Workers & Pages → $WORKER_NAME → Triggers → Routes:"
   echo -e "       Route: $CUSTOM_DOMAIN/api/*"
-  echo -e "    3. Update FRONTEND_URL = \"https://$CUSTOM_DOMAIN\" in wrangler.toml"
-  echo -e "       and redeploy the Worker:  cd artifacts/cloudflare && wrangler deploy"
+  echo -e "    3. Optionally clear VITE_API_URL from Pages env vars if you want the"
+  echo -e "       frontend to use relative /api/* paths (recommended for same-domain routing)."
 else
   echo -e "  Your app is live at: ${BOLD}$PAGES_URL${NC}"
 fi
