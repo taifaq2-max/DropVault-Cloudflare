@@ -1174,3 +1174,45 @@ describe("SenderPage — Encrypting, Uploading, and Confirming phase labels", ()
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: file size limit — regression guard for the 2.5 MB enforcement bug
+// ---------------------------------------------------------------------------
+
+describe("SenderPage — file size limit enforcement", () => {
+  it("does not show a size-limit error when a file between 2.5 MB and 420 MB is added", async () => {
+    const { container } = render(React.createElement(SenderPage));
+
+    const filesTab = screen.getByRole("button", { name: /^files$/i });
+    await act(async () => {
+      fireEvent.click(filesTab);
+    });
+
+    const fileInput = container.querySelector(
+      'input[type="file"]'
+    ) as HTMLInputElement;
+
+    // Synthetic 4 MB file — larger than the old erroneous 2.5 MB cap but well
+    // within the real 420 MB product limit. Using Object.defineProperty avoids
+    // allocating 4 MB of actual memory in the test runner.
+    const largeMockFile = new File([], "large-test-file.bin", {
+      type: "application/octet-stream",
+    });
+    Object.defineProperty(largeMockFile, "size", {
+      value: 4 * 1024 * 1024, // 4 MB
+      configurable: true,
+    });
+
+    Object.defineProperty(fileInput, "files", {
+      value: [largeMockFile],
+      configurable: true,
+    });
+    await act(async () => {
+      fireEvent.change(fileInput);
+    });
+
+    // No "Total payload exceeds" error should be shown.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Total payload exceeds/i)).not.toBeInTheDocument();
+  });
+});
