@@ -230,7 +230,8 @@ export default function SenderPage() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const [encryptProgress, setEncryptProgress] = useState(0);
   const [readProgress, setReadProgress] = useState(0);
-  const [activeReadingFile, setActiveReadingFile] = useState<{ name: string; index: number; total: number } | null>(null);
+  const [activeReadingFiles, setActiveReadingFiles] = useState<string[]>([]);
+  const activeReadingSetRef = useRef<Set<number>>(new Set());
   const [uploadPhase, setUploadPhase] = useState<null | "reading" | "encrypting" | "uploading" | "confirming">(null);
   /** Metadata for retrying a failed R2 PUT without re-encrypting. */
   const [r2RetryContext, setR2RetryContext] = useState<R2RetryContext | null>(null);
@@ -358,7 +359,8 @@ export default function SenderPage() {
     setUploadPhase(null);
     setReadProgress(0);
     setEncryptProgress(0);
-    setActiveReadingFile(null);
+    setActiveReadingFiles([]);
+    activeReadingSetRef.current = new Set();
   };
 
   const handleCreateShare = async () => {
@@ -398,19 +400,28 @@ export default function SenderPage() {
         // ── Reading phase: track per-file FileReader progress in aggregate ──
         setUploadPhase("reading");
         setReadProgress(0);
-        setActiveReadingFile(files.length > 0 ? { name: files[0].name, index: 0, total: files.length } : null);
+        // Pre-populate with the first file so a name is shown immediately for
+        // single-file reads and before the first onprogress event fires.
+        setActiveReadingFiles(files.length > 0 ? [files[0].name] : []);
+        activeReadingSetRef.current = files.length > 0 ? new Set([0]) : new Set();
 
         const totalFileBytes = files.reduce((a, f) => a + f.file.size, 0);
         // Per-file loaded/total counters updated by FileReader.onprogress callbacks
         const fileLoaded = files.map(() => 0);
         const fileTotal = files.map((f) => f.file.size);
 
-        const updateReadProgress = (activeIdx?: number) => {
+        const updateReadProgress = (activeIdx?: number, markDone?: boolean) => {
           const loaded = fileLoaded.reduce((a, v) => a + v, 0);
           const total = fileTotal.reduce((a, v) => a + v, 0) || totalFileBytes || 1;
           setReadProgress(Math.round((loaded / total) * 100));
           if (activeIdx !== undefined) {
-            setActiveReadingFile({ name: files[activeIdx].name, index: activeIdx, total: files.length });
+            if (markDone) {
+              activeReadingSetRef.current.delete(activeIdx);
+            } else {
+              activeReadingSetRef.current.add(activeIdx);
+            }
+            const activeNames = [...activeReadingSetRef.current].map((i) => files[i].name);
+            setActiveReadingFiles(activeNames);
           }
         };
 
@@ -423,7 +434,7 @@ export default function SenderPage() {
             }, signal);
             // Mark this file as fully loaded in case onprogress wasn't fired at 100%
             fileLoaded[idx] = fi.file.size;
-            updateReadProgress();
+            updateReadProgress(idx, true);
             return { name: fi.name, size: fi.file.size, type: fi.file.type, data };
           })
         );
@@ -593,7 +604,8 @@ export default function SenderPage() {
         setUploadPhase(null);
         setReadProgress(0);
         setEncryptProgress(0);
-        setActiveReadingFile(null);
+        setActiveReadingFiles([]);
+        activeReadingSetRef.current = new Set();
         return;
       }
       captchaRef.current?.resetCaptcha();
@@ -1158,11 +1170,13 @@ export default function SenderPage() {
                     <div className="flex items-center justify-between font-mono text-xs text-muted-foreground uppercase tracking-widest">
                       <span className="truncate mr-2 min-w-0 flex-1">
                         {uploadPhase === "reading"
-                          ? activeReadingFile
-                            ? activeReadingFile.total > 1
-                              ? `Reading ${activeReadingFile.name} (${activeReadingFile.index + 1} of ${activeReadingFile.total})…`
-                              : `Reading ${activeReadingFile.name}…`
-                            : "Reading files…"
+                          ? activeReadingFiles.length === 0
+                            ? "Reading files…"
+                            : activeReadingFiles.length === 1
+                            ? `Reading ${activeReadingFiles[0]}…`
+                            : activeReadingFiles.length === 2
+                            ? `Reading: ${activeReadingFiles[0]}, ${activeReadingFiles[1]}…`
+                            : `Reading ${activeReadingFiles.length} files: ${activeReadingFiles[0]}, ${activeReadingFiles[1]}, +${activeReadingFiles.length - 2} more…`
                           : uploadPhase === "encrypting"
                           ? "Encrypting…"
                           : uploadPhase === "uploading"
