@@ -645,20 +645,6 @@ describe("SenderPage — R2 upload retry flow", () => {
   it("clicking Cancel during a retried file upload aborts the XHR and resets UI to form state with no error", async () => {
     // First PUT from the initial submit fails (500), showing Retry Upload.
     // Then a stuck XHR is installed before the retry so the retry PUT never resolves.
-    class AbortableStuckXHR {
-      status = 0;
-      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
-        onprogress: null,
-      };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      onabort: (() => void) | null = null;
-      ontimeout: (() => void) | null = null;
-      open(_method: string, _url: string) {}
-      setRequestHeader(_key: string, _value: string) {}
-      abort() { this.onabort?.(); }
-      send(_data: unknown) { /* never resolves */ }
-    }
 
     // Initial submit uses MockXHR (500 → shows Retry Upload).
     xhrResponseQueue = [500];
@@ -673,7 +659,7 @@ describe("SenderPage — R2 upload retry flow", () => {
     });
 
     // Now swap to a never-resolving XHR for the retry PUT.
-    vi.stubGlobal("XMLHttpRequest", AbortableStuckXHR);
+    vi.stubGlobal("XMLHttpRequest", makeStuckAbortableXHR());
 
     const retryBtn = screen.getByRole("button", { name: /retry upload/i });
     act(() => { fireEvent.click(retryBtn); });
@@ -952,24 +938,32 @@ describe("SenderPage — Cancel button during file processing", () => {
 // Tests: Cancel button during the Uploading phase
 // ---------------------------------------------------------------------------
 
+/**
+ * Returns a class whose instances never resolve their XHR (so the Uploading
+ * phase stays active indefinitely) but correctly fire `onabort` when
+ * `.abort()` is called.  Pass the result directly to `vi.stubGlobal`.
+ */
+function makeStuckAbortableXHR() {
+  return class StuckAbortableXHR {
+    status = 0;
+    upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
+      onprogress: null,
+    };
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onabort: (() => void) | null = null;
+    ontimeout: (() => void) | null = null;
+    open(_method: string, _url: string) {}
+    setRequestHeader(_key: string, _value: string) {}
+    abort() { this.onabort?.(); }
+    send(_data: unknown) { /* never resolves */ }
+  };
+}
+
 describe("SenderPage — Cancel button during upload", () => {
   it("shows the Cancel button while the XHR PUT is in-flight", async () => {
     // A never-resolving XHR keeps the uploading phase alive so we can inspect the UI.
-    class StuckXHR {
-      status = 0;
-      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
-        onprogress: null,
-      };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      onabort: (() => void) | null = null;
-      ontimeout: (() => void) | null = null;
-      open(_method: string, _url: string) {}
-      setRequestHeader(_key: string, _value: string) {}
-      abort() { this.onabort?.(); }
-      send(_data: unknown) { /* never resolves */ }
-    }
-    vi.stubGlobal("XMLHttpRequest", StuckXHR);
+    vi.stubGlobal("XMLHttpRequest", makeStuckAbortableXHR());
 
     await renderAndPrepare();
 
@@ -988,21 +982,7 @@ describe("SenderPage — Cancel button during upload", () => {
 
   it("clicking Cancel during upload aborts the XHR and resets UI to form state with no error", async () => {
     // A never-resolving XHR keeps the uploading phase alive.
-    class AbortableStuckXHR {
-      status = 0;
-      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
-        onprogress: null,
-      };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      onabort: (() => void) | null = null;
-      ontimeout: (() => void) | null = null;
-      open(_method: string, _url: string) {}
-      setRequestHeader(_key: string, _value: string) {}
-      abort() { this.onabort?.(); }
-      send(_data: unknown) { /* never resolves */ }
-    }
-    vi.stubGlobal("XMLHttpRequest", AbortableStuckXHR);
+    vi.stubGlobal("XMLHttpRequest", makeStuckAbortableXHR());
 
     await renderAndPrepare();
 
@@ -1033,21 +1013,7 @@ describe("SenderPage — Cancel button during upload", () => {
   });
 
   it("clicking Cancel during the initial upload in file mode aborts the XHR and resets UI to form state with no error", async () => {
-    class AbortableStuckXHR {
-      status = 0;
-      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
-        onprogress: null,
-      };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      onabort: (() => void) | null = null;
-      ontimeout: (() => void) | null = null;
-      open(_method: string, _url: string) {}
-      setRequestHeader(_key: string, _value: string) {}
-      abort() { this.onabort?.(); }
-      send(_data: unknown) { /* never resolves */ }
-    }
-    vi.stubGlobal("XMLHttpRequest", AbortableStuckXHR);
+    vi.stubGlobal("XMLHttpRequest", makeStuckAbortableXHR());
 
     await renderInFilesMode("document.pdf");
 
@@ -1083,20 +1049,6 @@ describe("SenderPage — Cancel button during upload", () => {
   it("clicking Cancel during a retry upload aborts the XHR and resets UI to form state with no error", async () => {
     // First PUT from the initial submit fails (500), showing Retry Upload.
     // Then a stuck XHR is installed before the retry so the retry PUT never resolves.
-    class AbortableStuckXHR {
-      status = 0;
-      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
-        onprogress: null,
-      };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      onabort: (() => void) | null = null;
-      ontimeout: (() => void) | null = null;
-      open(_method: string, _url: string) {}
-      setRequestHeader(_key: string, _value: string) {}
-      abort() { this.onabort?.(); }
-      send(_data: unknown) { /* never resolves */ }
-    }
 
     // Initial submit uses MockXHR (500 → shows Retry Upload).
     xhrResponseQueue = [500];
@@ -1111,7 +1063,7 @@ describe("SenderPage — Cancel button during upload", () => {
     });
 
     // Now swap to a never-resolving XHR for the retry PUT.
-    vi.stubGlobal("XMLHttpRequest", AbortableStuckXHR);
+    vi.stubGlobal("XMLHttpRequest", makeStuckAbortableXHR());
 
     const retryBtn = screen.getByRole("button", { name: /retry upload/i });
     act(() => { fireEvent.click(retryBtn); });
