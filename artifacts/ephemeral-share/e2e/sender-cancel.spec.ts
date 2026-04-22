@@ -357,4 +357,64 @@ test.describe("SenderPage — Cancel button during reading phase (file share)", 
       page.getByRole("textbox", { name: /^share link$/i })
     ).not.toBeVisible();
   });
+
+  test("a second file share can be created normally after cancellation during reading", async ({
+    page,
+  }) => {
+    // First, start and cancel a file share during the reading phase.
+    await page.goto("/");
+    await attachLargeFiles(page);
+
+    await page.getByRole("button", { name: /create secure share/i }).click();
+
+    // Confirm we are in the reading phase before clicking Cancel.
+    await expect(page.getByText(/^reading/i)).toBeVisible({ timeout: 15_000 });
+
+    const cancelBtn = page.getByRole("button", {
+      name: /cancel share creation/i,
+    });
+    await expect(cancelBtn).toBeVisible();
+    await cancelBtn.click();
+    await expect(cancelBtn).not.toBeVisible({ timeout: 5_000 });
+
+    // Swap the upload-url route for one that resolves immediately so the
+    // second attempt can complete successfully.
+    await page.unroute("**/api/shares/upload-url");
+    await page.route("**/api/shares/upload-url", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          shareId: MOCK_PENDING_ID,
+          uploadUrl: MOCK_UPLOAD_URL,
+        }),
+      })
+    );
+
+    // Route the R2 PUT and confirm so the full flow can succeed.
+    await page.route(MOCK_UPLOAD_URL, (route) => route.fulfill({ status: 200 }));
+    await page.route("**/api/shares/confirm", (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          shareId: MOCK_SHARE_ID,
+          expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+        }),
+      })
+    );
+
+    // Attach a fresh file and start a second share attempt.
+    const buffer = Buffer.alloc(1024, 0x42);
+    await page.locator('input[type="file"]').setInputFiles([
+      { name: "second-file.bin", mimeType: "application/octet-stream", buffer },
+    ]);
+
+    await page.getByRole("button", { name: /create secure share/i }).click();
+
+    // The second attempt must complete and show the share link.
+    const shareLink = page.getByRole("textbox", { name: /^share link$/i });
+    await expect(shareLink).toBeVisible({ timeout: 15_000 });
+    await expect(shareLink).toHaveValue(new RegExp(MOCK_SHARE_ID));
+  });
 });
