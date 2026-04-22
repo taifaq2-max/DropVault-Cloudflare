@@ -4,6 +4,8 @@
 
 VaultDrop lets you share sensitive files or text through a self-destructing link. All encryption happens client-side using the Web Crypto API — the server only ever sees ciphertext. The decryption key lives exclusively in the URL fragment and is never transmitted to the server.
 
+![VaultDrop sender page — dark mode](docs/screenshots/sender-page.jpg)
+
 ---
 
 ## How it works
