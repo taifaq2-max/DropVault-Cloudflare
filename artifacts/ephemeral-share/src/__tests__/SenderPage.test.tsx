@@ -568,3 +568,110 @@ describe("SenderPage — reading phase filename labels", () => {
     await act(async () => { resolveEncrypt("encrypted-payload-data"); });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: Cancel button during Reading and Encrypting phases
+// ---------------------------------------------------------------------------
+
+describe("SenderPage — Cancel button during file processing", () => {
+  it("shows the Cancel button while a file is being read", async () => {
+    // Keep the reading phase alive indefinitely so we can inspect the UI.
+    mockFileToBase64.mockImplementationOnce(
+      () => new Promise<string>(() => {})
+    );
+
+    await renderInFilesMode("large-file.bin");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    expect(
+      screen.getByRole("button", { name: /cancel share creation/i })
+    ).toBeInTheDocument();
+  });
+
+  it("clicking Cancel during the Reading phase resets the UI to the form state with no error", async () => {
+    // Keep the reading phase alive indefinitely.
+    mockFileToBase64.mockImplementationOnce(
+      () => new Promise<string>(() => {})
+    );
+
+    await renderInFilesMode("large-file.bin");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    // Cancel button should be visible while reading.
+    const cancelBtn = screen.getByRole("button", { name: /cancel share creation/i });
+    await act(async () => { fireEvent.click(cancelBtn); });
+
+    // Progress indicators should be gone.
+    expect(screen.queryByText(/Reading/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Encrypting/)).not.toBeInTheDocument();
+
+    // No error message.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Submit button should be available again.
+    expect(
+      screen.getByRole("button", { name: /create secure share/i })
+    ).toBeInTheDocument();
+  });
+
+  it("clicking Cancel during the Encrypting phase resets the UI to the form state with no error", async () => {
+    // Let reading finish instantly but keep encryption alive indefinitely.
+    mockEncryptPayload.mockImplementationOnce(
+      () => new Promise<string>(() => {})
+    );
+
+    await renderInFilesMode("large-file.bin");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    // Wait for the Encrypting phase to start.
+    await waitFor(() => {
+      expect(screen.getByText("Encrypting\u2026")).toBeInTheDocument();
+    });
+
+    const cancelBtn = screen.getByRole("button", { name: /cancel share creation/i });
+    await act(async () => { fireEvent.click(cancelBtn); });
+
+    // Encrypting label should be gone.
+    expect(screen.queryByText("Encrypting\u2026")).not.toBeInTheDocument();
+
+    // No error message.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Submit button should be available again.
+    expect(
+      screen.getByRole("button", { name: /create secure share/i })
+    ).toBeInTheDocument();
+  });
+
+  it("preserves the attached file list after cancelling", async () => {
+    // Keep the reading phase alive indefinitely.
+    mockFileToBase64.mockImplementationOnce(
+      () => new Promise<string>(() => {})
+    );
+
+    await renderInFilesMode("report.pdf");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    const cancelBtn = screen.getByRole("button", { name: /cancel share creation/i });
+    await act(async () => { fireEvent.click(cancelBtn); });
+
+    // The file name should still be visible in the file list.
+    expect(screen.getByText("report.pdf")).toBeInTheDocument();
+
+    // And we should be back to the form state (no progress indicators).
+    expect(screen.queryByText(/Reading/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
