@@ -153,18 +153,28 @@ async function askMultiChoice(question, choices, defaultChoices) {
 // Deploy config persistence (non-secret answers only)
 // ---------------------------------------------------------------------------
 
-function loadDeployConfig() {
+export function loadDeployConfig(configPath = DEPLOY_CONFIG) {
   try {
-    const raw = fs.readFileSync(DEPLOY_CONFIG, "utf8");
+    const raw = fs.readFileSync(configPath, "utf8");
     return JSON.parse(raw);
   } catch (_) {
     return {};
   }
 }
 
-function saveDeployConfig(values) {
+const DEPLOY_CONFIG_SECRET_KEYS = new Set([
+  "CF_TOKEN",
+  "hcaptchaSecretKey",
+  "r2SecretAccessKey",
+  "r2AccessKeyId",
+]);
+
+export function saveDeployConfig(values, configPath = DEPLOY_CONFIG) {
   try {
-    fs.writeFileSync(DEPLOY_CONFIG, JSON.stringify(values, null, 2) + "\n", "utf8");
+    const safe = Object.fromEntries(
+      Object.entries(values).filter(([k]) => !DEPLOY_CONFIG_SECRET_KEYS.has(k)),
+    );
+    fs.writeFileSync(configPath, JSON.stringify(safe, null, 2) + "\n", "utf8");
     ok(`Non-secret config saved to ${dim(".deploy.config.json")} for future re-runs`);
   } catch (e) {
     warn(`Could not save deploy config: ${e.message}`);
@@ -1051,8 +1061,10 @@ async function main() {
   console.log();
 }
 
-main().catch((err) => {
-  console.error(red(`\nFatal error: ${err.message}`));
-  if (process.env.DEBUG) console.error(err.stack);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((err) => {
+    console.error(red(`\nFatal error: ${err.message}`));
+    if (process.env.DEBUG) console.error(err.stack);
+    process.exit(1);
+  });
+}
