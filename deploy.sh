@@ -2,8 +2,11 @@
 # =============================================================================
 # deploy.sh — Interactive VaultDrop Cloudflare Deployment Script
 #
-# Usage:  bash deploy.sh
+# Usage:  bash deploy.sh [--dry-run]
 # Run from the repository root.  No prior Cloudflare knowledge required.
+#
+# --dry-run  Collect all inputs and print a full deployment plan, but make
+#            NO changes to Cloudflare, wrangler.toml, or the filesystem.
 # =============================================================================
 set -euo pipefail
 IFS=$'\n\t'
@@ -12,6 +15,15 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CF_DIR="$REPO_ROOT/artifacts/cloudflare"
 FE_DIR="$REPO_ROOT/artifacts/ephemeral-share"
 WRANGLER_TOML="$CF_DIR/wrangler.toml"
+
+# ── parse flags ───────────────────────────────────────────────────────────────
+DRY_RUN=false
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=true ;;
+    *) echo "Unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
 
 # ── colours (disabled when not a terminal) ───────────────────────────────────
 if [[ -t 1 ]]; then
@@ -27,15 +39,22 @@ warn()    { echo -e "${YELLOW}  ⚠${NC}  $*"; }
 error()   { echo -e "${RED}  ✖${NC}  $*" >&2; }
 header()  { echo -e "\n${BOLD}${BLUE}━━  $*${NC}"; }
 die()     { error "$*"; exit 1; }
+dryinfo() { echo -e "${YELLOW}  [dry-run]${NC}  $*"; }
 
 # run_step: run a command and exit with the real exit code on failure
+# In dry-run mode, print the command instead of running it.
 run_step() {
   local label="$1"; shift
-  info "$label"
-  local rc=0
-  "$@" || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    die "$label failed (exit $rc)."
+  if [[ "$DRY_RUN" == true ]]; then
+    dryinfo "Would run: $label"
+    dryinfo "  Command: $*"
+  else
+    info "$label"
+    local rc=0
+    "$@" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      die "$label failed (exit $rc)."
+    fi
   fi
 }
 
@@ -47,6 +66,15 @@ sedi() {
     sed -i "$@"
   fi
 }
+
+# ── dry-run banner ────────────────────────────────────────────────────────────
+if [[ "$DRY_RUN" == true ]]; then
+  echo
+  echo -e "${BOLD}${YELLOW}╔══════════════════════════════════════════════════════════╗${NC}"
+  echo -e "${BOLD}${YELLOW}║   DRY-RUN MODE — no changes will be made                 ║${NC}"
+  echo -e "${BOLD}${YELLOW}╚══════════════════════════════════════════════════════════╝${NC}"
+  echo
+fi
 
 # ── 1. Prerequisite checks (no wrangler yet — installed by pnpm) ─────────────
 header "Checking prerequisites"
@@ -79,28 +107,41 @@ fi
 
 # ── 2. Install dependencies (makes local wrangler binary available) ───────────
 header "Installing dependencies"
-cd "$REPO_ROOT"
-run_step "pnpm install" pnpm install
-success "Dependencies ready"
+if [[ "$DRY_RUN" == true ]]; then
+  dryinfo "Would run: pnpm install (installs workspace dependencies including wrangler)"
+else
+  cd "$REPO_ROOT"
+  run_step "pnpm install" pnpm install
+  success "Dependencies ready"
+fi
 
 # ── 3. Resolve wrangler + authenticate ───────────────────────────────────────
-# Prefer the workspace-local binary installed by pnpm above
-WRANGLER=""
-if [[ -x "$CF_DIR/node_modules/.bin/wrangler" ]]; then
-  WRANGLER="$CF_DIR/node_modules/.bin/wrangler"
-elif command -v wrangler &>/dev/null; then
-  WRANGLER="wrangler"
-else
-  die "wrangler not found even after pnpm install. Check artifacts/cloudflare/package.json."
-fi
-success "wrangler  $($WRANGLER --version 2>/dev/null | head -1)"
+WRANGLER_PATH="$CF_DIR/node_modules/.bin/wrangler"
 
-info "Checking Cloudflare authentication…"
-if ! $WRANGLER whoami &>/dev/null 2>&1; then
-  warn "Not logged in. Running 'wrangler login'…"
-  $WRANGLER login || die "Authentication failed."
+if [[ "$DRY_RUN" == true ]]; then
+  # In dry-run we don't install, so just record the expected wrangler location
+  WRANGLER="$WRANGLER_PATH"
+  header "Cloudflare authentication"
+  dryinfo "Would resolve wrangler from: $WRANGLER_PATH"
+  dryinfo "Would verify Cloudflare authentication (wrangler whoami)"
+else
+  WRANGLER=""
+  if [[ -x "$WRANGLER_PATH" ]]; then
+    WRANGLER="$WRANGLER_PATH"
+  elif command -v wrangler &>/dev/null; then
+    WRANGLER="wrangler"
+  else
+    die "wrangler not found even after pnpm install. Check artifacts/cloudflare/package.json."
+  fi
+  success "wrangler  $($WRANGLER --version 2>/dev/null | head -1)"
+
+  info "Checking Cloudflare authentication…"
+  if ! $WRANGLER whoami &>/dev/null 2>&1; then
+    warn "Not logged in. Running 'wrangler login'…"
+    $WRANGLER login || die "Authentication failed."
+  fi
+  success "Cloudflare authentication OK"
 fi
-success "Cloudflare authentication OK"
 
 # ── 4. Interactive prompts ───────────────────────────────────────────────────
 header "Configuration"
@@ -165,11 +206,14 @@ fi
 # SESSION_SECRET
 echo
 read -rs -p "  SESSION_SECRET (Enter to auto-generate): " SESSION_SECRET_IN; echo
+SESSION_SECRET_SOURCE=""
 if [[ -z "$SESSION_SECRET_IN" ]]; then
   SESSION_SECRET=$(openssl rand -hex 64)
+  SESSION_SECRET_SOURCE="auto-generated"
   info "Auto-generated SESSION_SECRET."
 else
   SESSION_SECRET="$SESSION_SECRET_IN"
+  SESSION_SECRET_SOURCE="provided by user"
 fi
 unset SESSION_SECRET_IN
 
@@ -198,7 +242,131 @@ if [[ "$ENABLE_R2" == "Y" ]]; then
 fi
 
 echo
-info "All inputs collected.  Starting deployment…"
+info "All inputs collected."
+
+# ── DRY-RUN: print plan and exit ──────────────────────────────────────────────
+if [[ "$DRY_RUN" == true ]]; then
+  WORKER_URL_DRY="https://${WORKER_NAME}.${CF_ACCOUNT_ID}.workers.dev"
+  PAGES_URL_DRY="https://${PAGES_PROJECT}.pages.dev"
+  [[ "$ROUTING_OPTION" == "B" ]] && FRONTEND_URL="$PAGES_URL_DRY"
+
+  echo
+  echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+  echo -e "${BOLD}  DEPLOYMENT PLAN (dry-run — nothing has been changed)${NC}"
+  echo -e "${BOLD}${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+  echo
+  echo -e "${BOLD}  Configuration${NC}"
+  echo "    Cloudflare Account ID : $CF_ACCOUNT_ID"
+  echo "    Cloudflare API Token  : ******* (provided)"
+  echo "    Worker name           : $WORKER_NAME"
+  echo "    R2 bucket             : $R2_BUCKET"
+  echo "    Pages project         : $PAGES_PROJECT"
+  echo "    Routing option        : $ROUTING_OPTION"
+  [[ "$ROUTING_OPTION" == "A" ]] && echo "    Custom domain         : $CUSTOM_DOMAIN"
+  echo "    Large-file R2 uploads : $ENABLE_R2"
+  echo "    hCaptcha              : $([ -n "$HCAPTCHA_SECRET_KEY" ] && echo "enabled (site key: ${HCAPTCHA_SITE_KEY:-<not provided>})" || echo "disabled")"
+
+  echo
+  echo -e "${BOLD}  Step 1 — Install dependencies${NC}"
+  echo "    pnpm install"
+
+  echo
+  echo -e "${BOLD}  Step 2 — Cloudflare authentication${NC}"
+  echo "    $WRANGLER_PATH whoami"
+
+  echo
+  echo -e "${BOLD}  Step 3 — wrangler.toml changes${NC}"
+  echo "    File: $WRANGLER_TOML"
+  echo "    • name           → \"$WORKER_NAME\""
+  echo "    • CLOUDFLARE_ACCOUNT_ID → \"$CF_ACCOUNT_ID\""
+  echo "    • bucket_name (production) → \"$R2_BUCKET\""
+  echo "    • R2_BUCKET_NAME → \"$R2_BUCKET\""
+  [[ "$ROUTING_OPTION" == "A" ]] && echo "    • FRONTEND_URL   → \"$FRONTEND_URL\""
+  echo "    • KV namespace IDs patched after provisioning (REPLACE_WITH_YOUR_KV_NAMESPACE_ID, etc.)"
+
+  echo
+  echo -e "${BOLD}  Step 4 — KV namespace provisioning${NC}"
+  echo "    Would create (or reuse if existing):"
+  echo "      • ${WORKER_NAME}-SHARE_KV          (production)"
+  echo "      • ${WORKER_NAME}-SHARE_KV_preview  (preview)"
+  echo "    Command: $WRANGLER_PATH kv namespace create SHARE_KV"
+  echo "    Command: $WRANGLER_PATH kv namespace create SHARE_KV --preview"
+  echo "    The resulting IDs are patched into wrangler.toml."
+
+  echo
+  echo -e "${BOLD}  Step 5 — R2 bucket provisioning${NC}"
+  echo "    Would create (or reuse if existing): $R2_BUCKET"
+  echo "    Command: $WRANGLER_PATH r2 bucket create \"$R2_BUCKET\""
+
+  echo
+  echo -e "${BOLD}  Step 6 — Worker secrets${NC}"
+  SECRETS_LIST=("SESSION_SECRET (${SESSION_SECRET_SOURCE})")
+  [[ -n "$HCAPTCHA_SECRET_KEY" ]] && SECRETS_LIST+=("HCAPTCHA_SECRET_KEY (provided)")
+  [[ -n "$R2_KEY_ID" ]]           && SECRETS_LIST+=("R2_ACCESS_KEY_ID (provided)")
+  [[ -n "$R2_KEY_SECRET" ]]       && SECRETS_LIST+=("R2_ACCESS_KEY_SECRET (provided)")
+  echo "    Secrets that would be set on Worker \"$WORKER_NAME\":"
+  for s in "${SECRETS_LIST[@]}"; do
+    echo "      • $s"
+  done
+  echo "    Command pattern: echo <value> | $WRANGLER_PATH secret put <NAME>"
+
+  echo
+  echo -e "${BOLD}  Step 7 — Deploy Worker${NC}"
+  echo "    Command: $WRANGLER_PATH deploy"
+  echo "    Expected URL: $WORKER_URL_DRY"
+
+  echo
+  echo -e "${BOLD}  Step 8 — Build frontend${NC}"
+  BUILD_ENVS=""
+  [[ -n "$HCAPTCHA_SITE_KEY" ]] && BUILD_ENVS+="VITE_HCAPTCHA_SITE_KEY=\"$HCAPTCHA_SITE_KEY\" "
+  [[ "$ENABLE_R2" == "Y" ]]     && BUILD_ENVS+="VITE_USE_R2_UPLOADS=\"true\" "
+  echo "    Command: ${BUILD_ENVS}pnpm --filter @workspace/ephemeral-share run build"
+  echo "    Output:  artifacts/ephemeral-share/dist/public"
+
+  echo
+  echo -e "${BOLD}  Step 9 — Deploy to Cloudflare Pages${NC}"
+  echo "    Command: $WRANGLER_PATH pages deploy \"$FE_DIR/dist/public\" --project-name \"$PAGES_PROJECT\""
+  echo "    Expected URL: $PAGES_URL_DRY"
+
+  if [[ "$ROUTING_OPTION" == "B" ]]; then
+    echo
+    echo -e "${BOLD}  Step 10 — Update Worker CORS origin (Option B)${NC}"
+    echo "    wrangler.toml: FRONTEND_URL → \"$PAGES_URL_DRY\""
+    echo "    Command: $WRANGLER_PATH deploy  (redeploy with updated FRONTEND_URL)"
+  fi
+
+  echo
+  echo -e "${BOLD}  Step 11 — Set Pages environment variables (REST API)${NC}"
+  echo "    PATCH https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/pages/projects/${PAGES_PROJECT}"
+  echo "    Variables that would be set:"
+  echo "      • VITE_API_URL = \"$WORKER_URL_DRY\""
+  [[ "$ENABLE_R2" == "Y" ]]     && echo "      • VITE_USE_R2_UPLOADS = \"true\""
+  [[ -n "$HCAPTCHA_SITE_KEY" ]] && echo "      • VITE_HCAPTCHA_SITE_KEY = \"$HCAPTCHA_SITE_KEY\""
+  [[ "$ROUTING_OPTION" == "B" ]] && echo "      • WORKER_URL = \"$WORKER_URL_DRY\"  (secret_text)"
+
+  if [[ -n "$R2_KEY_ID" && -n "$FRONTEND_URL" ]]; then
+    echo
+    echo -e "${BOLD}  Step 12 — R2 CORS policy${NC}"
+    echo "    PUT https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/r2/buckets/${R2_BUCKET}/cors"
+    echo "    AllowedOrigins : [\"$FRONTEND_URL\"]"
+    echo "    AllowedMethods : [\"PUT\"]"
+    echo "    AllowedHeaders : [\"Content-Type\"]"
+  fi
+
+  echo
+  echo -e "${BOLD}  Step 13 — Final Pages redeploy${NC}"
+  echo "    Command: $WRANGLER_PATH pages deploy \"$FE_DIR/dist/public\" --project-name \"$PAGES_PROJECT\""
+  echo "    Purpose: picks up the new Pages environment variables set in step 11."
+
+  echo
+  echo -e "${BOLD}${YELLOW}  No Cloudflare API calls, no wrangler commands, and no file${NC}"
+  echo -e "${BOLD}${YELLOW}  mutations were made.  Remove --dry-run to run for real.${NC}"
+  echo
+  exit 0
+fi
+
+info "Starting deployment…"
 
 # ── 5. Patch wrangler.toml BEFORE any wrangler commands ──────────────────────
 #       (wrangler derives KV namespace titles from the name in wrangler.toml)
