@@ -206,6 +206,108 @@ test.describe("ReceiverPage — captcha pre-check loading indicator", () => {
   });
 });
 
+test.describe("ReceiverPage — post-captcha re-check loading state", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript({ content: MOCK_HCAPTCHA_INIT_SCRIPT });
+    await page.route("**hcaptcha.com**", (route) => route.abort());
+  });
+
+  test("shows 'Checking share status' spinner while re-check is in-flight then hides it", async ({
+    page,
+  }) => {
+    let reCheckResolve: (() => void) | null = null;
+    const reCheckDeferred = new Promise<void>((resolve) => {
+      reCheckResolve = resolve;
+    });
+    let authenticatedPeekSeen = false;
+
+    await page.route(PEEK_REGEX, async (route) => {
+      const url = route.request().url();
+
+      if (url.includes("captchaToken")) {
+        // Authenticated peek triggered by the Continue button — return captcha_error
+        // so the component sets reCheckLoading=true and fires the tokenless re-check.
+        authenticatedPeekSeen = true;
+        return route.fulfill({
+          status: 402,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "captcha_error" }),
+        });
+      }
+
+      if (authenticatedPeekSeen) {
+        // This is the tokenless re-check — delay it so the spinner stays visible
+        // long enough for the assertion to pass, then resolve with captcha_required
+        // so the component stays on the captcha screen (share still exists).
+        await reCheckDeferred;
+        return route.fulfill({
+          status: 402,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "captcha_required" }),
+        });
+      }
+
+      // Initial tokenless pre-check — return captcha_required so the captcha
+      // gate opens and the widget becomes interactive.
+      return route.fulfill({
+        status: 402,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "captcha_required" }),
+      });
+    });
+
+    await page.goto(SHARE_PATH);
+
+    // Wait for the initial pre-check to resolve and the widget to become interactive.
+    await expect(page.getByLabel("Checking share validity")).not.toBeVisible({
+      timeout: 8_000,
+    });
+
+    // Wait for the mock hcaptcha stub to call render() before firing onVerify.
+    await page.waitForFunction(
+      () =>
+        (window as unknown as { hcaptcha: { _rendered: boolean } }).hcaptcha
+          ._rendered === true,
+      { timeout: 5_000 }
+    );
+
+    // Simulate the user completing the captcha challenge.
+    await page.evaluate(() =>
+      (
+        window as unknown as {
+          __hcaptchaFireVerify: (t: string) => void;
+        }
+      ).__hcaptchaFireVerify("10000000-ffff-ffff-ffff-000000000001")
+    );
+
+    const continueBtn = page.locator(
+      'button[aria-label="Continue to access share"]'
+    );
+    await expect(continueBtn).toBeEnabled({ timeout: 5_000 });
+
+    // Click Continue — triggers the authenticated peek which returns captcha_error,
+    // which in turn starts the tokenless re-check (reCheckLoading=true).
+    await continueBtn.click();
+
+    // The 'Checking share status' spinner must be visible while the re-check is
+    // held in-flight by the deferred.
+    await expect(page.getByLabel("Checking share status")).toBeVisible({
+      timeout: 5_000,
+    });
+    await expect(
+      page.getByText("Checking share status…")
+    ).toBeVisible();
+
+    // Release the delayed re-check response.
+    reCheckResolve!();
+
+    // After the re-check resolves the spinner must disappear.
+    await expect(page.getByLabel("Checking share status")).not.toBeVisible({
+      timeout: 5_000,
+    });
+  });
+});
+
 test.describe("ReceiverPage — hCaptcha test-credentials end-to-end", () => {
   test.beforeEach(async ({ page }) => {
     // Intercept window.hcaptchaOnLoad assignment before any page script runs.
