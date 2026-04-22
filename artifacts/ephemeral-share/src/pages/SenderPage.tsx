@@ -239,6 +239,8 @@ export default function SenderPage() {
   const r2EncryptedDataRef = useRef<string | null>(null);
   /** AbortController for the active reading/encrypting operation. */
   const cancelControllerRef = useRef<AbortController | null>(null);
+  /** Active XHR for the R2 PUT upload — held so handleCancel can abort it. */
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
   /** Monotonically increasing counter; incremented on each new attempt so stale async tails can self-discard. */
   const attemptIdRef = useRef<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -356,9 +358,12 @@ export default function SenderPage() {
   const handleCancel = () => {
     cancelControllerRef.current?.abort();
     cancelControllerRef.current = null;
+    xhrRef.current?.abort();
+    xhrRef.current = null;
     setUploadPhase(null);
     setReadProgress(0);
     setEncryptProgress(0);
+    setUploadProgress(0);
     setActiveReadingFiles([]);
     activeReadingSetRef.current = new Set();
   };
@@ -527,12 +532,14 @@ export default function SenderPage() {
         try {
           await new Promise<void>((resolve, reject) => {
             const xhr = new XMLHttpRequest();
+            xhrRef.current = xhr;
             xhr.upload.onprogress = (e) => {
               if (e.lengthComputable) {
                 setUploadProgress(Math.round((e.loaded / e.total) * 100));
               }
             };
             xhr.onload = () => {
+              xhrRef.current = null;
               if (xhr.status >= 200 && xhr.status < 300) {
                 setUploadProgress(100);
                 resolve();
@@ -540,14 +547,17 @@ export default function SenderPage() {
                 reject(new Error(`R2 upload failed (status ${xhr.status}). Please try again.`));
               }
             };
-            xhr.onerror = () => reject(new Error("R2 upload failed. Please try again."));
-            xhr.onabort = () => reject(new Error("Upload was cancelled. Please try again."));
-            xhr.ontimeout = () => reject(new Error("Upload timed out. Check your connection and try again."));
+            xhr.onerror = () => { xhrRef.current = null; reject(new Error("R2 upload failed. Please try again.")); };
+            xhr.onabort = () => { xhrRef.current = null; reject(new DOMException("Upload aborted by user.", "AbortError")); };
+            xhr.ontimeout = () => { xhrRef.current = null; reject(new Error("Upload timed out. Check your connection and try again.")); };
             xhr.open("PUT", uploadUrl);
             xhr.setRequestHeader("Content-Type", "application/octet-stream");
             xhr.send(encryptedData);
           });
         } catch (r2Err) {
+          // If the user clicked Cancel, let the AbortError bubble to the outer
+          // catch which resets the UI silently with no error message.
+          if ((r2Err as { name?: string }).name === "AbortError") throw r2Err;
           // XHR PUT failed — keep r2RetryContext so "Retry Upload" button is shown.
           captchaRef.current?.resetCaptcha();
           setCaptchaToken("");
@@ -604,8 +614,11 @@ export default function SenderPage() {
         setUploadPhase(null);
         setReadProgress(0);
         setEncryptProgress(0);
+        setUploadProgress(0);
         setActiveReadingFiles([]);
         activeReadingSetRef.current = new Set();
+        setR2RetryContext(null);
+        r2EncryptedDataRef.current = null;
         return;
       }
       captchaRef.current?.resetCaptcha();
@@ -679,12 +692,14 @@ export default function SenderPage() {
 
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
+        xhrRef.current = xhr;
         xhr.upload.onprogress = (e) => {
           if (e.lengthComputable) {
             setUploadProgress(Math.round((e.loaded / e.total) * 100));
           }
         };
         xhr.onload = () => {
+          xhrRef.current = null;
           if (xhr.status >= 200 && xhr.status < 300) {
             setUploadProgress(100);
             resolve();
@@ -692,9 +707,9 @@ export default function SenderPage() {
             reject(new Error(`R2 upload failed (status ${xhr.status}). Please try again.`));
           }
         };
-        xhr.onerror = () => reject(new Error("R2 upload failed. Please check your connection and try again."));
-        xhr.onabort = () => reject(new Error("Upload was cancelled. Please try again."));
-        xhr.ontimeout = () => reject(new Error("Upload timed out. Check your connection and try again."));
+        xhr.onerror = () => { xhrRef.current = null; reject(new Error("R2 upload failed. Please check your connection and try again.")); };
+        xhr.onabort = () => { xhrRef.current = null; reject(new DOMException("Upload aborted by user.", "AbortError")); };
+        xhr.ontimeout = () => { xhrRef.current = null; reject(new Error("Upload timed out. Check your connection and try again.")); };
         xhr.open("PUT", uploadUrl);
         xhr.setRequestHeader("Content-Type", "application/octet-stream");
         xhr.send(r2EncryptedDataRef.current!);
@@ -716,7 +731,15 @@ export default function SenderPage() {
       setExpiresAt(result.expiresAt);
       setShareCreated(true);
     } catch (err: unknown) {
-      // Captcha token is single-use; reset on any failure to force a fresh solve.
+      // AbortError means the user clicked Cancel — reset silently with no error message.
+      if ((err as { name?: string }).name === "AbortError") {
+        setUploadPhase(null);
+        setUploadProgress(0);
+        setR2RetryContext(null);
+        r2EncryptedDataRef.current = null;
+        return;
+      }
+      // Captcha token is single-use; reset on any non-abort failure to force a fresh solve.
       captchaRef.current?.resetCaptcha();
       setCaptchaToken("");
       setUploadPhase(null);
@@ -1192,7 +1215,7 @@ export default function SenderPage() {
                           ? `${uploadProgress}%`
                           : ""}
                       </span>
-                      {(uploadPhase === "reading" || uploadPhase === "encrypting") && (
+                      {(uploadPhase === "reading" || uploadPhase === "encrypting" || uploadPhase === "uploading") && (
                         <button
                           type="button"
                           onClick={handleCancel}

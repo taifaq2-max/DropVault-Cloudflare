@@ -23,6 +23,10 @@ class MockXHR {
   open(_method: string, _url: string) {}
   setRequestHeader(_key: string, _value: string) {}
 
+  abort() {
+    this.onabort?.();
+  }
+
   send(_data: unknown) {
     const responseStatus =
       xhrResponseQueue.length > 0 ? xhrResponseQueue.shift()! : 200;
@@ -715,6 +719,152 @@ describe("SenderPage — Cancel button during file processing", () => {
     // And we should be back to the form state (no progress indicators).
     expect(screen.queryByText(/Reading/)).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Tests: Cancel button during the Uploading phase
+// ---------------------------------------------------------------------------
+
+describe("SenderPage — Cancel button during upload", () => {
+  it("shows the Cancel button while the XHR PUT is in-flight", async () => {
+    // A never-resolving XHR keeps the uploading phase alive so we can inspect the UI.
+    class StuckXHR {
+      status = 0;
+      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
+        onprogress: null,
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      ontimeout: (() => void) | null = null;
+      open(_method: string, _url: string) {}
+      setRequestHeader(_key: string, _value: string) {}
+      abort() { this.onabort?.(); }
+      send(_data: unknown) { /* never resolves */ }
+    }
+    vi.stubGlobal("XMLHttpRequest", StuckXHR);
+
+    await renderAndPrepare();
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    await waitFor(() => {
+      expect(screen.getByText("Uploading\u2026")).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByRole("button", { name: /cancel share creation/i })
+    ).toBeInTheDocument();
+  });
+
+  it("clicking Cancel during upload aborts the XHR and resets UI to form state with no error", async () => {
+    // A never-resolving XHR keeps the uploading phase alive.
+    class AbortableStuckXHR {
+      status = 0;
+      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
+        onprogress: null,
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      ontimeout: (() => void) | null = null;
+      open(_method: string, _url: string) {}
+      setRequestHeader(_key: string, _value: string) {}
+      abort() { this.onabort?.(); }
+      send(_data: unknown) { /* never resolves */ }
+    }
+    vi.stubGlobal("XMLHttpRequest", AbortableStuckXHR);
+
+    await renderAndPrepare();
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    // Wait for the Uploading phase to be active.
+    await waitFor(() => {
+      expect(screen.getByText("Uploading\u2026")).toBeInTheDocument();
+    });
+
+    // Click Cancel during upload.
+    const cancelBtn = screen.getByRole("button", { name: /cancel share creation/i });
+    await act(async () => { fireEvent.click(cancelBtn); });
+
+    // Progress indicators should be gone.
+    expect(screen.queryByText("Uploading\u2026")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Encrypting/)).not.toBeInTheDocument();
+
+    // No error message — the abort should be silent.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Submit button should be available again.
+    expect(
+      screen.getByRole("button", { name: /create secure share/i })
+    ).toBeInTheDocument();
+  });
+
+  it("clicking Cancel during a retry upload aborts the XHR and resets UI to form state with no error", async () => {
+    // First PUT from the initial submit fails (500), showing Retry Upload.
+    // Then a stuck XHR is installed before the retry so the retry PUT never resolves.
+    class AbortableStuckXHR {
+      status = 0;
+      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
+        onprogress: null,
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      ontimeout: (() => void) | null = null;
+      open(_method: string, _url: string) {}
+      setRequestHeader(_key: string, _value: string) {}
+      abort() { this.onabort?.(); }
+      send(_data: unknown) { /* never resolves */ }
+    }
+
+    // Initial submit uses MockXHR (500 → shows Retry Upload).
+    xhrResponseQueue = [500];
+
+    await renderAndPrepare();
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    await act(async () => { fireEvent.click(submitBtn); });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+    });
+
+    // Now swap to a never-resolving XHR for the retry PUT.
+    vi.stubGlobal("XMLHttpRequest", AbortableStuckXHR);
+
+    const retryBtn = screen.getByRole("button", { name: /retry upload/i });
+    act(() => { fireEvent.click(retryBtn); });
+    await act(async () => {});
+
+    // Wait for the Uploading phase to start.
+    await waitFor(() => {
+      expect(screen.getByText("Uploading\u2026")).toBeInTheDocument();
+    });
+
+    // Cancel button must be visible during the retry upload.
+    expect(
+      screen.getByRole("button", { name: /cancel share creation/i })
+    ).toBeInTheDocument();
+
+    // Click Cancel.
+    const cancelBtn = screen.getByRole("button", { name: /cancel share creation/i });
+    await act(async () => { fireEvent.click(cancelBtn); });
+
+    // UI should silently reset — no error, no progress label, submit available.
+    expect(screen.queryByText("Uploading\u2026")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /create secure share/i })
+    ).toBeInTheDocument();
+    // Retry Upload button should also be gone (retry context cleared on abort).
+    expect(screen.queryByRole("button", { name: /retry upload/i })).not.toBeInTheDocument();
   });
 });
 
