@@ -979,4 +979,70 @@ describe("SenderPage — Encrypting, Uploading, and Confirming phase labels", ()
       expect(screen.getByText("Confirming\u2026")).toBeInTheDocument();
     });
   });
+
+  it("updates the displayed upload percentage as upload.onprogress events are fired", async () => {
+    // A controllable XHR that exposes its instance so the test can manually
+    // fire upload.onprogress events and then complete the upload.
+    let capturedXhr: ProgressXHR | null = null;
+
+    class ProgressXHR {
+      status = 0;
+      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
+        onprogress: null,
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      ontimeout: (() => void) | null = null;
+      open(_method: string, _url: string) {}
+      setRequestHeader(_key: string, _value: string) {}
+      abort() { this.onabort?.(); }
+      send(_data: unknown) {
+        // Store a reference so the test can fire progress events manually.
+        capturedXhr = this;
+      }
+    }
+
+    vi.stubGlobal("XMLHttpRequest", ProgressXHR);
+
+    await renderAndPrepare();
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    // Wait until the Uploading phase is active and the XHR has been created.
+    await waitFor(() => {
+      expect(screen.getByText("Uploading\u2026")).toBeInTheDocument();
+      expect(capturedXhr).not.toBeNull();
+    });
+
+    // Fire a 50 % progress event and assert the percentage updates.
+    await act(async () => {
+      capturedXhr!.upload.onprogress?.({
+        lengthComputable: true,
+        loaded: 500,
+        total: 1000,
+      });
+    });
+
+    expect(screen.getByText("50%")).toBeInTheDocument();
+
+    // Fire a 100 % progress event and assert the percentage updates.
+    await act(async () => {
+      capturedXhr!.upload.onprogress?.({
+        lengthComputable: true,
+        loaded: 1000,
+        total: 1000,
+      });
+    });
+
+    expect(screen.getByText("100%")).toBeInTheDocument();
+
+    // Complete the XHR so the test doesn't leak an unresolved promise.
+    await act(async () => {
+      capturedXhr!.status = 200;
+      capturedXhr!.onload?.();
+    });
+  });
 });
