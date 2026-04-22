@@ -250,3 +250,111 @@ test.describe("SenderPage — Cancel button during encrypting phase", () => {
     await expect(shareLink).toHaveValue(new RegExp(MOCK_SHARE_ID));
   });
 });
+
+// ---------------------------------------------------------------------------
+// Helpers — file-share setup
+// ---------------------------------------------------------------------------
+
+/**
+ * Switch to "files" mode and attach three synthetic 5 MB files to the hidden
+ * file input.  Using multiple large files (15 MB total) makes the FileReader
+ * reading phase take long enough in headless Chromium that the Cancel button
+ * is still visible—and the "Reading…" status label is still shown—before the
+ * reading phase completes and the encrypting phase begins.
+ */
+async function attachLargeFiles(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: /^files$/i }).click();
+
+  const buffer = Buffer.alloc(5 * 1024 * 1024, 0x42);
+  await page.locator('input[type="file"]').setInputFiles([
+    { name: "large-test-file-1.bin", mimeType: "application/octet-stream", buffer },
+    { name: "large-test-file-2.bin", mimeType: "application/octet-stream", buffer },
+    { name: "large-test-file-3.bin", mimeType: "application/octet-stream", buffer },
+  ]);
+}
+
+// ---------------------------------------------------------------------------
+// Tests — Cancel button reachability and reset during reading phase
+//
+// The upload-url fetch is held open so the entire reading → encrypting
+// pipeline stays alive long enough for assertions.  The reading phase is the
+// first phase entered for file shares, so the Cancel button is visible as
+// soon as the first FileReader starts.
+// ---------------------------------------------------------------------------
+
+test.describe("SenderPage — Cancel button during reading phase (file share)", () => {
+  test.beforeEach(async ({ page }) => {
+    await holdUploadUrl(page);
+  });
+
+  test("Cancel button appears while files are being read", async ({ page }) => {
+    await page.goto("/");
+    await attachLargeFiles(page);
+
+    await page.getByRole("button", { name: /create secure share/i }).click();
+
+    // The "Reading …" status label is exclusive to uploadPhase === "reading".
+    // Wait for it to confirm we are in the reading phase before asserting
+    // the Cancel button.
+    await expect(page.getByText(/^reading/i)).toBeVisible({ timeout: 15_000 });
+
+    await expect(
+      page.getByRole("button", { name: /cancel share creation/i })
+    ).toBeVisible();
+  });
+
+  test("clicking Cancel during reading resets the UI and shows no error banner", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await attachLargeFiles(page);
+
+    await page.getByRole("button", { name: /create secure share/i }).click();
+
+    // Confirm we are in the reading phase before clicking Cancel.
+    await expect(page.getByText(/^reading/i)).toBeVisible({ timeout: 15_000 });
+
+    const cancelBtn = page.getByRole("button", {
+      name: /cancel share creation/i,
+    });
+    await expect(cancelBtn).toBeVisible();
+
+    await cancelBtn.click();
+
+    // Progress section must disappear — uploadPhase reset to null.
+    await expect(cancelBtn).not.toBeVisible({ timeout: 5_000 });
+
+    // Cancel is a silent reset — no error banner should appear.
+    await expect(page.getByRole("alert")).not.toBeVisible();
+
+    // The primary action button must be available again.
+    await expect(
+      page.getByRole("button", { name: /create secure share/i })
+    ).toBeEnabled({ timeout: 5_000 });
+  });
+
+  test("the share URL is never shown after cancellation during reading", async ({
+    page,
+  }) => {
+    await page.goto("/");
+    await attachLargeFiles(page);
+
+    await page.getByRole("button", { name: /create secure share/i }).click();
+
+    // Confirm we are in the reading phase before clicking Cancel.
+    await expect(page.getByText(/^reading/i)).toBeVisible({ timeout: 15_000 });
+
+    const cancelBtn = page.getByRole("button", {
+      name: /cancel share creation/i,
+    });
+    await expect(cancelBtn).toBeVisible();
+    await cancelBtn.click();
+
+    await expect(cancelBtn).not.toBeVisible({ timeout: 5_000 });
+
+    // The share-link input must not appear — the share was never completed.
+    await expect(
+      page.getByRole("textbox", { name: /^share link$/i })
+    ).not.toBeVisible();
+  });
+});
