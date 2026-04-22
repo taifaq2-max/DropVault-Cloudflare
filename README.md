@@ -178,6 +178,8 @@ See [DropVault-docker.md](DropVault-docker.md) for full production Docker setup 
 | `SESSION_SECRET` | Yes | — | Signs internal tokens. Use `openssl rand -hex 64`. |
 | `PORT` | Yes | — | API listen port (use `8080` locally). |
 | `HCAPTCHA_SECRET_KEY` | No | — | hCaptcha server-side key. Omit to skip CAPTCHA in dev. |
+| `FRONTEND_URL` | No | — | Allowed CORS origin (e.g. `https://yourdomain.com`). Set in production to prevent cross-origin requests from other domains. |
+| `TRUST_PROXY` | No | — | Set to `true` when running behind a reverse proxy (nginx, Cloudflare) so that rate limiting reads the real client IP from `X-Forwarded-For`. |
 | `DEBUG` | No | `false` | Enables verbose request logging to the terminal. |
 
 ### Frontend build-time (`VITE_*`)
@@ -266,4 +268,6 @@ This project is released under the [MIT License](LICENSE).
 
 ---
 
-> **VaultDrop does not persist any data.** All shares live in RAM. A server restart permanently destroys every active share. This is intentional — it is the security model.
+> **Data storage depends on the deployment target.**
+> In the local/Docker mode, all shares live in RAM — a server restart permanently destroys every active share.
+> In the Cloudflare deployment, share metadata is stored in KV (with TTL) and large blobs in R2. In both cases, the encryption key is **never** stored anywhere; plaintext is never stored anywhere; and data is automatically purged after the TTL or the first retrieval, whichever comes first.
