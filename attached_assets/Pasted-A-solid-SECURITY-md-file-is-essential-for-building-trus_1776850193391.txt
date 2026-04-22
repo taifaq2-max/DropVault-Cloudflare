@@ -1,0 +1,49 @@
+A solid `SECURITY.md` file is essential for building trust with your contributors and users. It ensures that security researchers know how to disclose vulnerabilities privately rather than airing them out in the public issue tracker.
+
+Here is a professionally structured GitHub Security Policy template you can copy and adapt.
+
+---
+
+# Security Policy
+
+## Supported Versions
+
+The table below outlines which versions of the project are currently receiving security updates. We prioritize patching the latest stable release, but we also provide "Long Term Support" (LTS) for specific older versions.
+
+| Version | Supported          | Notes                               |
+| ------- | ------------------ | ----------------------------------- |
+| 5.1.x   | :white_check_mark: | Current Stable Release              |
+| 5.0.x   | :x:                | End of Life (Upgrade to 5.1.x)      |
+| 4.0.x   | :white_check_mark: | LTS Support (Security Patches Only) |
+| < 4.0   | :x:                | Unsupported                         |
+
+---
+
+## Reporting a Vulnerability
+
+**Please do not open a public GitHub issue for security-related items.** We take the security of our project seriously. If you believe you have found a vulnerability, please report it through one of the following channels:
+
+* **GitHub Private Vulnerability Reporting:** Navigate to the "Security" tab of this repository and select "Report a vulnerability." This is the most secure and streamlined method.
+* **Email:** If you prefer email, please contact our security team at **security@example.com**.
+
+### What to Include
+To help us triage your report quickly, please include:
+1.  A descriptive title.
+2.  A detailed description of the vulnerability.
+3.  Steps to reproduce the issue (PoC scripts or screenshots are highly encouraged).
+4.  The potential impact of the vulnerability.
+
+### Our Commitment
+When you report a vulnerability, you can expect the following:
+* **Acknowledgement:** We will acknowledge receipt of your report within **48 hours**.
+* **Triage:** We will provide a preliminary assessment of the issue within **5 business days**.
+* **Confidentiality:** We will keep the details of the report confidential until a fix is released.
+* **Recognition:** With your permission, we will credit you for the discovery in our release notes.
+
+---
+
+## Security Best Practices
+We encourage our users to keep their installations secure by:
+* Subscribing to our [Releases Feed] to stay informed of updates.
+* Ensuring your environment meets the minimum recommended requirements.
+* Using automated tools like **GitHub Dependabot** to monitor your own dependencies.
