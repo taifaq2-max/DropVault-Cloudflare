@@ -1032,6 +1032,54 @@ describe("SenderPage — Cancel button during upload", () => {
     ).toBeInTheDocument();
   });
 
+  it("clicking Cancel during the initial upload in file mode aborts the XHR and resets UI to form state with no error", async () => {
+    class AbortableStuckXHR {
+      status = 0;
+      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
+        onprogress: null,
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      ontimeout: (() => void) | null = null;
+      open(_method: string, _url: string) {}
+      setRequestHeader(_key: string, _value: string) {}
+      abort() { this.onabort?.(); }
+      send(_data: unknown) { /* never resolves */ }
+    }
+    vi.stubGlobal("XMLHttpRequest", AbortableStuckXHR);
+
+    await renderInFilesMode("document.pdf");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    // Wait for the Uploading phase to start.
+    await waitFor(() => {
+      expect(screen.getByText("Uploading\u2026")).toBeInTheDocument();
+    });
+
+    // Click Cancel during the initial file-mode upload.
+    const cancelBtn = screen.getByRole("button", { name: /cancel share creation/i });
+    await act(async () => { fireEvent.click(cancelBtn); });
+
+    // Progress indicators should be gone.
+    expect(screen.queryByText("Uploading\u2026")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Encrypting/)).not.toBeInTheDocument();
+
+    // No error message — the abort should be silent.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Submit button should be available again.
+    expect(
+      screen.getByRole("button", { name: /create secure share/i })
+    ).toBeInTheDocument();
+
+    // No retry button should appear — this was the initial upload, not a retry.
+    expect(screen.queryByRole("button", { name: /retry upload/i })).not.toBeInTheDocument();
+  });
+
   it("clicking Cancel during a retry upload aborts the XHR and resets UI to form state with no error", async () => {
     // First PUT from the initial submit fails (500), showing Retry Upload.
     // Then a stuck XHR is installed before the retry so the retry PUT never resolves.
