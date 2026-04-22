@@ -40,6 +40,7 @@ const USE_R2_UPLOADS = import.meta.env.VITE_USE_R2_UPLOADS === "true";
 const MAX_TOTAL_BYTES = USE_R2_UPLOADS
   ? 420 * 1024 * 1024   // 420 MB — R2 direct-upload path
   : 2.5 * 1024 * 1024;  // 2.5 MB — inline KV path; matches Express dev server limit
+const MAX_DISPLAY_BYTES = 420 * 1024 * 1024; // always show 420 MB as the product limit
 const MAX_FILES = 10;
 
 interface FileItem {
@@ -930,7 +931,7 @@ export default function SenderPage() {
                         <div className="text-2xl">↓</div>
                         <div>Drop files here or click to browse</div>
                         <div className="text-xs">
-                          Up to {MAX_FILES} files, {formatBytes(MAX_TOTAL_BYTES)} total
+                          Up to {MAX_FILES} files, {formatBytes(MAX_DISPLAY_BYTES)} total
                         </div>
                       </div>
                     </div>
