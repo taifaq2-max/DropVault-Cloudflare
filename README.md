@@ -222,6 +222,27 @@ See **[CLOUDFLARE_DEPLOY.md](CLOUDFLARE_DEPLOY.md)** for step-by-step instructio
 - CORS configuration for R2 direct uploads
 - Custom domain vs. Pages Function proxy routing
 
+#### GitHub Actions CI/CD
+
+`.github/workflows/deploy.yml` automatically runs tests, builds the frontend, and deploys both the Worker and the Pages frontend on every push to `main`.
+
+**Required GitHub Secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Description |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with **Cloudflare Pages: Edit** and **Workers Scripts: Edit** permissions. Create one at [Cloudflare → Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens). |
+| `CF_ACCOUNT_ID` | Your Cloudflare Account ID (right sidebar of any zone in the dashboard, or `wrangler whoami`). |
+| `CF_PAGES_PROJECT` | Name of the Cloudflare Pages project (e.g. `vaultdrop`). Must exist before the first automated deploy — create it once via `bash deploy.sh` or the Cloudflare dashboard. |
+
+**Optional GitHub Secrets** (omit to disable the feature):
+
+| Secret | Description |
+|---|---|
+| `VITE_HCAPTCHA_SITE_KEY` | hCaptcha public site key. Omit to build without CAPTCHA. |
+| `VITE_USE_R2_UPLOADS` | Set to `true` to enable the 420 MB R2 direct-upload flow. |
+
+> **Note**: The KV namespace IDs and Worker name in `artifacts/cloudflare/wrangler.toml` must already be populated (by running `bash deploy.sh` once or patching them manually) before the workflow can deploy the Worker successfully.
+
 ### Docker on a Linux VPS
 
 Two Docker images: an Express 5 API and an nginx reverse proxy. Supports TLS via Let's Encrypt, self-signed certs, or bring-your-own. Also includes a Cloudflare Tunnel option (no open firewall ports needed).
