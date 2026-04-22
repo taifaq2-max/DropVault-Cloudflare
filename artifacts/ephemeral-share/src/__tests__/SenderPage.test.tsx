@@ -348,6 +348,39 @@ describe("SenderPage — R2 upload retry flow", () => {
     expect(screen.queryByRole("textbox", { name: /^share link$/i })).not.toBeInTheDocument();
   });
 
+  it("shows an error and keeps the Retry Upload button when confirmShare fails after a successful PUT (file-upload mode)", async () => {
+    // First PUT returns 500 → Retry Upload button appears.
+    // Second PUT returns 200 → confirmShare is called and rejects.
+    xhrResponseQueue = [500, 200];
+    mockConfirmShare.mockRejectedValue(
+      new Error("Server unavailable. Please try again.")
+    );
+
+    await renderInFilesMode("example.txt");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+    });
+
+    const retryBtn = screen.getByRole("button", { name: /retry upload/i });
+    await act(async () => {
+      fireEvent.click(retryBtn);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/Server unavailable/i);
+    expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: /^share link$/i })).not.toBeInTheDocument();
+  });
+
   it("calls createShareUploadUrl a second time and completes the upload when the presigned URL has expired", async () => {
     // The first PUT fails; before retrying we advance time past the 900 s expiry
     // window (with the built-in 30 s early-expiry buffer) so that handleRetryUpload
