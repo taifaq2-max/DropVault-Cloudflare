@@ -28,12 +28,14 @@ error()   { echo -e "${RED}  ✖${NC}  $*" >&2; }
 header()  { echo -e "\n${BOLD}${BLUE}━━  $*${NC}"; }
 die()     { error "$*"; exit 1; }
 
-# run_step: run a command and exit loudly on failure
+# run_step: run a command and exit with the real exit code on failure
 run_step() {
   local label="$1"; shift
   info "$label"
-  if ! "$@"; then
-    die "$label FAILED (exit $?)."
+  local rc=0
+  "$@" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    die "$label failed (exit $rc)."
   fi
 }
 
@@ -46,7 +48,7 @@ sedi() {
   fi
 }
 
-# ── 1. Prerequisite checks ───────────────────────────────────────────────────
+# ── 1. Prerequisite checks (no wrangler yet — installed by pnpm) ─────────────
 header "Checking prerequisites"
 
 MISSING=0
@@ -73,24 +75,26 @@ else
   MISSING=1
 fi
 
-# Resolve wrangler — prefer the workspace-local binary
+[[ "$MISSING" -eq 1 ]] && die "Fix the issues above, then rerun."
+
+# ── 2. Install dependencies (makes local wrangler binary available) ───────────
+header "Installing dependencies"
+cd "$REPO_ROOT"
+run_step "pnpm install" pnpm install
+success "Dependencies ready"
+
+# ── 3. Resolve wrangler + authenticate ───────────────────────────────────────
+# Prefer the workspace-local binary installed by pnpm above
 WRANGLER=""
 if [[ -x "$CF_DIR/node_modules/.bin/wrangler" ]]; then
   WRANGLER="$CF_DIR/node_modules/.bin/wrangler"
 elif command -v wrangler &>/dev/null; then
   WRANGLER="wrangler"
-fi
-
-if [[ -z "$WRANGLER" ]]; then
-  error "wrangler not found. Run: pnpm install  (from repo root), then rerun."
-  MISSING=1
 else
-  success "wrangler  $($WRANGLER --version 2>/dev/null | head -1)"
+  die "wrangler not found even after pnpm install. Check artifacts/cloudflare/package.json."
 fi
+success "wrangler  $($WRANGLER --version 2>/dev/null | head -1)"
 
-[[ "$MISSING" -eq 1 ]] && die "Fix the issues above, then rerun."
-
-# wrangler auth check
 info "Checking Cloudflare authentication…"
 if ! $WRANGLER whoami &>/dev/null 2>&1; then
   warn "Not logged in. Running 'wrangler login'…"
@@ -98,7 +102,7 @@ if ! $WRANGLER whoami &>/dev/null 2>&1; then
 fi
 success "Cloudflare authentication OK"
 
-# ── 2. Interactive prompts ───────────────────────────────────────────────────
+# ── 4. Interactive prompts ───────────────────────────────────────────────────
 header "Configuration"
 echo
 echo "  Press Enter to accept defaults shown in [brackets]."
@@ -171,10 +175,10 @@ unset SESSION_SECRET_IN
 
 # hCaptcha
 echo
-read -r -p "  hCaptcha secret key (Enter to skip CAPTCHA): " HCAPTCHA_SECRET_KEY
+read -rs -p "  hCaptcha secret key (hidden, Enter to skip CAPTCHA): " HCAPTCHA_SECRET_KEY; echo
 HCAPTCHA_SITE_KEY=""
 if [[ -n "$HCAPTCHA_SECRET_KEY" ]]; then
-  read -r -p "  hCaptcha site key (for the browser widget): " HCAPTCHA_SITE_KEY
+  read -r -p "  hCaptcha site key (public widget key, not secret): " HCAPTCHA_SITE_KEY
 fi
 
 # R2 large-file support
@@ -195,12 +199,6 @@ fi
 
 echo
 info "All inputs collected.  Starting deployment…"
-
-# ── 3. Install dependencies ──────────────────────────────────────────────────
-header "Installing dependencies"
-cd "$REPO_ROOT"
-run_step "pnpm install" pnpm install
-success "Dependencies ready"
 
 # ── 4. Patch worker name in wrangler.toml BEFORE any wrangler commands ───────
 #       (wrangler derives KV namespace titles from the name in wrangler.toml)
