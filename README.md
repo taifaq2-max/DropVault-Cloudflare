@@ -128,11 +128,12 @@ cd DropVault
 pnpm install
 ```
 
-### Set the required secret
+### Create the required environment file
 
 ```bash
 # .env is gitignored — create it locally
 echo "SESSION_SECRET=$(openssl rand -hex 64)" > .env
+echo "PORT=8080" >> .env
 ```
 
 ### Start the API server
@@ -175,9 +176,9 @@ See [DropVault-docker.md](DropVault-docker.md) for full production Docker setup 
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `SESSION_SECRET` | Yes | — | Signs internal tokens. Use `openssl rand -hex 64`. |
+| `PORT` | Yes | — | API listen port (use `8080` locally). |
 | `HCAPTCHA_SECRET_KEY` | No | — | hCaptcha server-side key. Omit to skip CAPTCHA in dev. |
-| `PORT` | No | `8080` | API listen port. |
-| `DEBUG` | No | `false` | Enables verbose request logging. |
+| `DEBUG` | No | `false` | Enables verbose request logging to the terminal. |
 
 ### Frontend build-time (`VITE_*`)
 
@@ -238,7 +239,7 @@ See **[deployment.md](deployment.md)** for Cloudflare Tunnel, DNS proxy, and Mic
 | **TTL enforcement** | KV TTL (Cloudflare) or in-process timer (local); data is purged from RAM on expiry |
 | **Rate limiting** | 3 shares / minute / IP; sliding window via Durable Object or in-process counter |
 | **Supply-chain defence** | `pnpm-workspace.yaml` enforces `minimumReleaseAge: 1440` — packages must be ≥ 24 hours old before they can be installed |
-| **Zero logging** | No access logs, no error logs (terminal debug mode only), no IP tracking |
+| **No audit logging** | No share-access logs, no audit trails, no IP tracking. Startup and internal errors are logged to the terminal only; `DEBUG=true` enables verbose request logging for development |
 | **Security headers** | HSTS, CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy |
 
 ---
