@@ -1215,4 +1215,39 @@ describe("SenderPage — file size limit enforcement", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText(/Total payload exceeds/i)).not.toBeInTheDocument();
   });
+
+  it("shows a 'Total payload exceeds' error immediately when a file one byte over the 420 MB limit is added", async () => {
+    const { container } = render(React.createElement(SenderPage));
+
+    const filesTab = screen.getByRole("button", { name: /^files$/i });
+    await act(async () => {
+      fireEvent.click(filesTab);
+    });
+
+    const fileInput = container.querySelector(
+      'input[type="file"]'
+    ) as HTMLInputElement;
+
+    // Synthetic file at exactly 420 MB + 1 byte — one byte beyond the product cap.
+    // Using Object.defineProperty avoids allocating actual memory in the test runner.
+    const overLimitFile = new File([], "too-large.bin", {
+      type: "application/octet-stream",
+    });
+    Object.defineProperty(overLimitFile, "size", {
+      value: 420 * 1024 * 1024 + 1,
+      configurable: true,
+    });
+
+    Object.defineProperty(fileInput, "files", {
+      value: [overLimitFile],
+      configurable: true,
+    });
+    await act(async () => {
+      fireEvent.change(fileInput);
+    });
+
+    // A "Total payload exceeds" error must appear immediately.
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Total payload exceeds/i);
+  });
 });
