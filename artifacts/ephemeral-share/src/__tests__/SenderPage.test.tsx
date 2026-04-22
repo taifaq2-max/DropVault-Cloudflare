@@ -116,6 +116,7 @@ vi.mock("@hcaptcha/react-hcaptcha", async () => {
 
 const mockCreateShareUploadUrl = vi.fn();
 const mockConfirmShare = vi.fn();
+const mockFileToBase64 = vi.fn().mockResolvedValue("base64filedata");
 
 vi.mock("@workspace/api-client-react", () => ({
   useCreateShare: () => ({ mutateAsync: vi.fn(), isPending: false }),
@@ -124,18 +125,20 @@ vi.mock("@workspace/api-client-react", () => ({
   confirmShare: mockConfirmShare,
 }));
 
+const mockEncryptPayload = vi.fn().mockResolvedValue("encrypted-payload-data");
+
 vi.mock("@/lib/crypto", () => ({
   generateEncryptionKey: vi.fn().mockResolvedValue({
     key: {} as CryptoKey,
     rawKey: new Uint8Array(32),
     keyBase64Url: "test-key-base64url",
   }),
-  encryptPayload: vi.fn().mockResolvedValue("encrypted-payload-data"),
+  encryptPayload: mockEncryptPayload,
   encryptKeyWithPassword: vi.fn().mockResolvedValue({
     encryptedKey: "encrypted-key-hash",
     salt: "test-salt",
   }),
-  fileToBase64: vi.fn().mockResolvedValue("base64filedata"),
+  fileToBase64: mockFileToBase64,
 }));
 
 vi.mock("@/lib/utils", () => ({
@@ -428,5 +431,140 @@ describe("SenderPage — R2 upload retry flow", () => {
 
     expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/share link/i)).not.toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Helper: render SenderPage in file-upload mode with the given file names
+// attached via the hidden file input.
+// ---------------------------------------------------------------------------
+
+async function renderInFilesMode(
+  ...fileNames: string[]
+): Promise<{ container: HTMLElement }> {
+  const { container } = render(React.createElement(SenderPage));
+
+  const filesTab = screen.getByRole("button", { name: /^files$/i });
+  await act(async () => {
+    fireEvent.click(filesTab);
+  });
+
+  const fileInput = container.querySelector(
+    'input[type="file"]'
+  ) as HTMLInputElement;
+  const mockFiles = fileNames.map(
+    (name) => new File(["x"], name, { type: "application/octet-stream" })
+  );
+  Object.defineProperty(fileInput, "files", {
+    value: mockFiles,
+    configurable: true,
+  });
+  await act(async () => {
+    fireEvent.change(fileInput);
+  });
+
+  const captcha = screen.getByTestId("hcaptcha-widget");
+  await act(async () => {
+    fireEvent.click(captcha);
+  });
+
+  return { container };
+}
+
+// ---------------------------------------------------------------------------
+// Tests: reading phase filename labels
+// ---------------------------------------------------------------------------
+
+describe("SenderPage — reading phase filename labels", () => {
+  it("shows the filename while a single file is being read", async () => {
+    let resolveRead!: (v: string) => void;
+    mockFileToBase64.mockImplementationOnce(
+      () => new Promise<string>((res) => { resolveRead = res; })
+    );
+
+    await renderInFilesMode("secret.pdf");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    expect(screen.getByText("Reading secret.pdf\u2026")).toBeInTheDocument();
+
+    await act(async () => { resolveRead("base64filedata"); });
+  });
+
+  it("shows both filenames while two files are being read simultaneously", async () => {
+    const resolvers: Array<(v: string) => void> = [];
+    const makeDeferred = (_file: File, onProg?: (loaded: number, total: number) => void) => {
+      onProg?.(0, 100);
+      return new Promise<string>((res) => { resolvers.push(res); });
+    };
+    mockFileToBase64.mockImplementationOnce(makeDeferred);
+    mockFileToBase64.mockImplementationOnce(makeDeferred);
+
+    await renderInFilesMode("alpha.jpg", "beta.mp4");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    expect(
+      screen.getByText("Reading: alpha.jpg, beta.mp4\u2026")
+    ).toBeInTheDocument();
+
+    await act(async () => { resolvers.forEach((r) => r("base64filedata")); });
+  });
+
+  it("decrements the active-file counter as individual files finish reading", async () => {
+    const resolvers: Array<(v: string) => void> = [];
+    const makeDeferred = (_file: File, onProg?: (loaded: number, total: number) => void) => {
+      onProg?.(0, 100);
+      return new Promise<string>((res) => { resolvers.push(res); });
+    };
+    mockFileToBase64.mockImplementationOnce(makeDeferred);
+    mockFileToBase64.mockImplementationOnce(makeDeferred);
+    mockFileToBase64.mockImplementationOnce(makeDeferred);
+
+    await renderInFilesMode("alpha.jpg", "beta.mp4", "gamma.zip");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    expect(
+      screen.getByText("Reading 3 files: alpha.jpg, beta.mp4, +1 more\u2026")
+    ).toBeInTheDocument();
+
+    await act(async () => { resolvers[0]("base64filedata"); });
+
+    expect(
+      screen.getByText("Reading: beta.mp4, gamma.zip\u2026")
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolvers[1]("base64filedata");
+      resolvers[2]("base64filedata");
+    });
+  });
+
+  it("replaces the reading label with Encrypting once all files have been read", async () => {
+    let resolveEncrypt!: (v: string) => void;
+    mockEncryptPayload.mockImplementationOnce(
+      () => new Promise<string>((res) => { resolveEncrypt = res; })
+    );
+
+    await renderInFilesMode("document.txt");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Reading document\.txt/)).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByText("Encrypting\u2026")).toBeInTheDocument();
+
+    await act(async () => { resolveEncrypt("encrypted-payload-data"); });
   });
 });
