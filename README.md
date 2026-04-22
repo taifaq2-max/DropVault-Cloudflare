@@ -224,15 +224,19 @@ See **[CLOUDFLARE_DEPLOY.md](CLOUDFLARE_DEPLOY.md)** for step-by-step instructio
 
 #### GitHub Actions CI/CD
 
-`.github/workflows/deploy.yml` automatically runs tests, builds the frontend, and deploys both the Worker and the Pages frontend on every push to `main`.
+`.github/workflows/deploy.yml` automatically runs tests, builds the frontend, and deploys both the Worker and the Pages frontend. It contains two jobs:
+
+- **`deploy-production`** — triggered on pushes to `main`. Deploys to the production Worker (`vaultdrop-api`) and the production Pages project.
+- **`deploy-staging`** — triggered on pushes to `staging`. Deploys to the staging Worker (`vaultdrop-api-staging`, via `wrangler deploy --env staging`) and a separate staging Pages project.
 
 **Required GitHub Secrets** (Settings → Secrets and variables → Actions):
 
-| Secret | Description |
-|---|---|
-| `CLOUDFLARE_API_TOKEN` | Cloudflare API token with **Cloudflare Pages: Edit** and **Workers Scripts: Edit** permissions. Create one at [Cloudflare → Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens). |
-| `CF_ACCOUNT_ID` | Your Cloudflare Account ID (right sidebar of any zone in the dashboard, or `wrangler whoami`). |
-| `CF_PAGES_PROJECT` | Name of the Cloudflare Pages project (e.g. `vaultdrop`). Must exist before the first automated deploy — create it once via `bash deploy.sh` or the Cloudflare dashboard. |
+| Secret | Used by | Description |
+|---|---|---|
+| `CLOUDFLARE_API_TOKEN` | both | Cloudflare API token with **Cloudflare Pages: Edit** and **Workers Scripts: Edit** permissions. Create one at [Cloudflare → Profile → API Tokens](https://dash.cloudflare.com/profile/api-tokens). |
+| `CF_ACCOUNT_ID` | both | Your Cloudflare Account ID (right sidebar of any zone in the dashboard, or `wrangler whoami`). |
+| `CF_PAGES_PROJECT` | production | Name of the production Cloudflare Pages project (e.g. `vaultdrop`). Must exist before the first automated deploy — create it once via `bash deploy.sh` or the Cloudflare dashboard. |
+| `CF_PAGES_PROJECT_STAGING` | staging | Name of the staging Cloudflare Pages project (e.g. `vaultdrop-staging`). Create it once in the Cloudflare dashboard or with `wrangler pages project create vaultdrop-staging` before the first staging deploy. |
 
 **Optional GitHub Secrets** (omit to disable the feature):
 
@@ -241,7 +245,7 @@ See **[CLOUDFLARE_DEPLOY.md](CLOUDFLARE_DEPLOY.md)** for step-by-step instructio
 | `VITE_HCAPTCHA_SITE_KEY` | hCaptcha public site key. Omit to build without CAPTCHA. |
 | `VITE_USE_R2_UPLOADS` | Set to `true` to enable the 420 MB R2 direct-upload flow. |
 
-> **Note**: The KV namespace IDs and Worker name in `artifacts/cloudflare/wrangler.toml` must already be populated (by running `bash deploy.sh` once or patching them manually) before the workflow can deploy the Worker successfully.
+> **Note**: The KV namespace IDs in `artifacts/cloudflare/wrangler.toml` must already be populated for both the production environment and the `[env.staging]` block (by running `bash deploy.sh` once or patching them manually) before the workflow can deploy the Worker successfully. The staging block also requires its own KV namespace and R2 bucket (`vaultdrop-shares-staging`) created in Cloudflare beforehand.
 
 ### Docker on a Linux VPS
 
