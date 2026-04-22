@@ -49,6 +49,7 @@ Thumbs.db
 
 # Saved deployment config (non-secret answers for re-runs — local only)
 .deploy.config.json
+.deploy.cfg
 
 # Replit
 .cache/
