@@ -200,19 +200,22 @@ fi
 echo
 info "All inputs collected.  Starting deployment…"
 
-# ── 4. Patch worker name in wrangler.toml BEFORE any wrangler commands ───────
+# ── 5. Patch wrangler.toml BEFORE any wrangler commands ──────────────────────
 #       (wrangler derives KV namespace titles from the name in wrangler.toml)
+#       Patterns are value-agnostic (".*") so reruns with changed inputs work.
 header "Patching wrangler.toml"
-sedi "s|^name = \"vaultdrop-api\"|name = \"$WORKER_NAME\"|" "$WRANGLER_TOML"
-sedi "s|CLOUDFLARE_ACCOUNT_ID = \"\"|CLOUDFLARE_ACCOUNT_ID = \"$CF_ACCOUNT_ID\"|g" "$WRANGLER_TOML"
+sedi "s|^name = \".*\"|name = \"$WORKER_NAME\"|" "$WRANGLER_TOML"
+sedi "s|CLOUDFLARE_ACCOUNT_ID = \".*\"|CLOUDFLARE_ACCOUNT_ID = \"$CF_ACCOUNT_ID\"|g" "$WRANGLER_TOML"
+# Match only the production bucket (not the staging variant that ends in -staging)
 sedi "s|bucket_name = \"vaultdrop-shares\"|bucket_name = \"$R2_BUCKET\"|g" "$WRANGLER_TOML"
-sedi "s|R2_BUCKET_NAME = \"vaultdrop-shares\"|R2_BUCKET_NAME = \"$R2_BUCKET\"|g" "$WRANGLER_TOML"
+sedi "s|R2_BUCKET_NAME = \".*\"|R2_BUCKET_NAME = \"$R2_BUCKET\"|g" "$WRANGLER_TOML"
+# FRONTEND_URL: replace whatever value is currently set (works on reruns too)
 if [[ "$ROUTING_OPTION" == "A" ]]; then
-  sedi "s|^FRONTEND_URL = \"\"|FRONTEND_URL = \"$FRONTEND_URL\"|" "$WRANGLER_TOML"
+  sedi "s|^FRONTEND_URL = \".*\"|FRONTEND_URL = \"$FRONTEND_URL\"|" "$WRANGLER_TOML"
 fi
 success "wrangler.toml patched (worker name, account ID, bucket)"
 
-# ── 5. KV namespace provisioning ────────────────────────────────────────────
+# ── 6. KV namespace provisioning ────────────────────────────────────────────
 header "Provisioning KV namespaces"
 
 # Returns the 32-char hex ID for a KV namespace, creating it if needed.
@@ -266,10 +269,20 @@ success "wrangler.toml KV IDs patched"
 # ── 6. R2 bucket provisioning ─────────────────────────────────────────────────
 header "Provisioning R2 bucket"
 
-info "Creating R2 bucket '$R2_BUCKET' (no-op if it already exists)…"
-# R2 bucket creation is idempotent — a non-zero exit just means it already exists
-cd "$CF_DIR" && $WRANGLER r2 bucket create "$R2_BUCKET" 2>&1 || \
-  warn "  Bucket creation returned non-zero — it likely already exists, continuing."
+info "Creating R2 bucket '$R2_BUCKET' (skipped automatically if already exists)…"
+R2_CREATE_OUT="" R2_CREATE_RC=0
+cd "$CF_DIR"
+R2_CREATE_OUT=$($WRANGLER r2 bucket create "$R2_BUCKET" 2>&1) || R2_CREATE_RC=$?
+if [[ "$R2_CREATE_RC" -ne 0 ]]; then
+  # Distinguish "already exists" from genuine errors
+  if echo "$R2_CREATE_OUT" | grep -qi "already exists\|already created\|10006"; then
+    warn "  Bucket '$R2_BUCKET' already exists — reusing it."
+  else
+    error "R2 bucket creation failed (exit $R2_CREATE_RC):"
+    echo "$R2_CREATE_OUT" >&2
+    die "Check your account ID, API token permissions, and bucket name, then rerun."
+  fi
+fi
 success "R2 bucket '$R2_BUCKET' ready"
 
 # ── 7. Worker secrets ─────────────────────────────────────────────────────────
@@ -402,6 +415,10 @@ else
 fi
 
 # ── 13. R2 CORS policy ────────────────────────────────────────────────────────
+# R2 CORS is applied only when large-file R2 uploads are enabled because
+# the browser makes direct PUT requests to R2 only in that mode.
+# For the default mode (Worker-proxied uploads ≤4 MB) CORS is not needed
+# on the bucket itself — the Worker handles cross-origin for the frontend.
 if [[ -n "$R2_KEY_ID" && -n "$FRONTEND_URL" ]]; then
   header "Setting R2 CORS policy"
 
