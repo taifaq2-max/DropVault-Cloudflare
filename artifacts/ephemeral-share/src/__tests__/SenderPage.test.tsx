@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import React from "react";
+import { makeStuckAbortableXHR } from "./helpers/xhrHelpers";
 
 // ---------------------------------------------------------------------------
 // XHR mock — response queue controls whether each R2 PUT succeeds or fails.
@@ -937,28 +938,6 @@ describe("SenderPage — Cancel button during file processing", () => {
 // ---------------------------------------------------------------------------
 // Tests: Cancel button during the Uploading phase
 // ---------------------------------------------------------------------------
-
-/**
- * Returns a class whose instances never resolve their XHR (so the Uploading
- * phase stays active indefinitely) but correctly fire `onabort` when
- * `.abort()` is called.  Pass the result directly to `vi.stubGlobal`.
- */
-function makeStuckAbortableXHR() {
-  return class StuckAbortableXHR {
-    status = 0;
-    upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
-      onprogress: null,
-    };
-    onload: (() => void) | null = null;
-    onerror: (() => void) | null = null;
-    onabort: (() => void) | null = null;
-    ontimeout: (() => void) | null = null;
-    open(_method: string, _url: string) {}
-    setRequestHeader(_key: string, _value: string) {}
-    abort() { this.onabort?.(); }
-    send(_data: unknown) { /* never resolves */ }
-  };
-}
 
 describe("SenderPage — Cancel button during upload", () => {
   it("shows the Cancel button while the XHR PUT is in-flight", async () => {
