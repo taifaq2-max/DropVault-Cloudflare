@@ -641,6 +641,69 @@ describe("SenderPage — R2 upload retry flow", () => {
     expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
     expect(screen.queryByLabelText(/share link/i)).not.toBeInTheDocument();
   });
+
+  it("clicking Cancel during a retried file upload aborts the XHR and resets UI to form state with no error", async () => {
+    // First PUT from the initial submit fails (500), showing Retry Upload.
+    // Then a stuck XHR is installed before the retry so the retry PUT never resolves.
+    class AbortableStuckXHR {
+      status = 0;
+      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
+        onprogress: null,
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      ontimeout: (() => void) | null = null;
+      open(_method: string, _url: string) {}
+      setRequestHeader(_key: string, _value: string) {}
+      abort() { this.onabort?.(); }
+      send(_data: unknown) { /* never resolves */ }
+    }
+
+    // Initial submit uses MockXHR (500 → shows Retry Upload).
+    xhrResponseQueue = [500];
+
+    await renderInFilesMode("example.txt");
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    await act(async () => { fireEvent.click(submitBtn); });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /retry upload/i })).toBeInTheDocument();
+    });
+
+    // Now swap to a never-resolving XHR for the retry PUT.
+    vi.stubGlobal("XMLHttpRequest", AbortableStuckXHR);
+
+    const retryBtn = screen.getByRole("button", { name: /retry upload/i });
+    act(() => { fireEvent.click(retryBtn); });
+    await act(async () => {});
+
+    // Wait for the Uploading phase to start.
+    await waitFor(() => {
+      expect(screen.getByText("Uploading\u2026")).toBeInTheDocument();
+    });
+
+    // Cancel button must be visible during the retry upload.
+    expect(
+      screen.getByRole("button", { name: /cancel share creation/i })
+    ).toBeInTheDocument();
+
+    // Click Cancel.
+    const cancelBtn = screen.getByRole("button", { name: /cancel share creation/i });
+    await act(async () => { fireEvent.click(cancelBtn); });
+
+    // UI should silently reset — no error, no progress label, submit available.
+    expect(screen.queryByText("Uploading\u2026")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /create secure share/i })
+    ).toBeInTheDocument();
+    // Retry Upload button should also be gone (retry context cleared on abort).
+    expect(screen.queryByRole("button", { name: /retry upload/i })).not.toBeInTheDocument();
+    // No share link should be present.
+    expect(screen.queryByLabelText(/share link/i)).not.toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
