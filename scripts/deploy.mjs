@@ -315,6 +315,114 @@ async function cfApi(urlPath, method = "GET", body = undefined) {
 }
 
 // ---------------------------------------------------------------------------
+// Token validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Verify that CF_TOKEN is valid, active, and carries the permissions required
+ * by this deployment script.  The script exits before making any changes if
+ * the token fails either check.
+ *
+ * Flow:
+ *  1. GET /user/tokens/verify  — confirms the token is recognised and active,
+ *     and returns the token's own ID.
+ *  2. GET /user/tokens/:id     — fetches the full policy list so we can check
+ *     for required permission groups before any resources are touched.
+ *     This call requires the token to include "User:API Tokens:Read" (or a
+ *     higher-level scope); if it fails the script exits with a clear error.
+ *
+ * Required permission groups (see step 1 prompt for the dashboard link):
+ *   Workers KV Storage (Edit), Workers R2 Storage (Edit),
+ *   Workers Scripts (Edit), Cloudflare Pages (Edit), Account Settings (Read),
+ *   User: API Tokens (Read).
+ */
+async function validateCfToken() {
+  info("Validating API token…");
+
+  let verifyJson;
+  try {
+    verifyJson = await cfApi("/user/tokens/verify");
+  } catch (e) {
+    fail(`API token validation failed: ${e.message}`);
+    fail("Please check that the token is correct and has not expired.");
+    process.exit(1);
+  }
+
+  const tokenId = verifyJson.result && verifyJson.result.id;
+  const status  = verifyJson.result && verifyJson.result.status;
+  if (status !== "active") {
+    fail(`API token is not active (status: ${status || "unknown"}).`);
+    fail("Please create or regenerate your token and try again.");
+    process.exit(1);
+  }
+  if (!tokenId) {
+    fail("Cloudflare did not return a token ID in the verify response.");
+    fail("Please check that the token is correct and try again.");
+    process.exit(1);
+  }
+
+  // Each entry: `match(name)` tests a lowercase permission-group name string.
+  // We require both the service keyword AND the access level so that, for
+  // example, a read-only "Workers KV Storage Read" token does not pass an
+  // Edit check.  Account Settings only requires Read so any level is accepted.
+  const REQUIRED_PERMISSIONS = [
+    {
+      label: "Workers KV Storage (Edit)",
+      match: (n) => (n.includes("kv storage")) && (n.includes("write") || n.includes("edit")),
+    },
+    {
+      label: "Workers R2 Storage (Edit)",
+      match: (n) => (n.includes("r2 storage")) && (n.includes("write") || n.includes("edit")),
+    },
+    {
+      label: "Workers Scripts (Edit)",
+      match: (n) => (n.includes("worker") && n.includes("script")) && (n.includes("write") || n.includes("edit")),
+    },
+    {
+      label: "Cloudflare Pages (Edit)",
+      match: (n) => (n.includes("pages")) && (n.includes("write") || n.includes("edit")),
+    },
+    {
+      label: "Account Settings (Read)",
+      match: (n) => n.includes("account settings") && (n.includes("read") || n.includes("write") || n.includes("edit")),
+    },
+  ];
+
+  let tokenJson;
+  try {
+    tokenJson = await cfApi(`/user/tokens/${tokenId}`);
+  } catch (e) {
+    fail(`Could not fetch token permission details: ${e.message}`);
+    fail(
+      "Ensure the token has permission to read its own details, or verify manually\n" +
+      "    at: https://dash.cloudflare.com/profile/api-tokens",
+    );
+    process.exit(1);
+  }
+
+  const policies = (tokenJson.result && tokenJson.result.policies) || [];
+  const allPermNames = policies.flatMap(
+    (p) => (p.permission_groups || []).map((g) => (g.name || "").toLowerCase()),
+  );
+
+  const missing = REQUIRED_PERMISSIONS.filter(
+    (req) => !allPermNames.some((name) => req.match(name)),
+  );
+
+  if (missing.length > 0) {
+    fail("API token is missing the following required permissions:");
+    missing.forEach((m) => fail(`  • ${m.label}`));
+    fail(
+      "Create or edit your token at: https://dash.cloudflare.com/profile/api-tokens\n" +
+      "    then re-run the deployment script.",
+    );
+    process.exit(1);
+  }
+
+  ok("API token is valid, active, and has the required permissions");
+}
+
+// ---------------------------------------------------------------------------
 // KV provisioning
 // ---------------------------------------------------------------------------
 async function listKvNamespaces() {
@@ -496,10 +604,13 @@ async function main() {
   info(
     `Create an API token at: ${cyan("https://dash.cloudflare.com/profile/api-tokens")}\n` +
     `    Required permissions: Workers KV Storage (Edit), Workers R2 Storage (Edit),\n` +
-    `    Workers Scripts (Edit), Cloudflare Pages (Edit), Account Settings (Read).`,
+    `    Workers Scripts (Edit), Cloudflare Pages (Edit), Account Settings (Read),\n` +
+    `    User: API Tokens (Read) — needed for the startup permission check.`,
   );
   CF_TOKEN = await askSecret("Cloudflare API token");
   if (!CF_TOKEN) { fail("API token is required. Aborting."); process.exit(1); }
+
+  await validateCfToken();
 
   info(
     `Find your Account ID at: ${cyan("https://dash.cloudflare.com")} → right sidebar\n` +
