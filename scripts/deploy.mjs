@@ -598,6 +598,21 @@ async function main() {
     `secret management and deployments.\n`,
   );
 
+  const resetConfig = process.argv.includes("--reset-config");
+  if (resetConfig) {
+    try {
+      fs.unlinkSync(DEPLOY_CONFIG);
+      ok(`Saved config ${dim(".deploy.config.json")} has been deleted — starting fresh.`);
+    } catch (e) {
+      if (e.code !== "ENOENT") {
+        warn(`Could not delete deploy config: ${e.message}`);
+      } else {
+        info(`No saved config found at ${dim(".deploy.config.json")} — nothing to reset.`);
+      }
+    }
+    console.log();
+  }
+
   createRL();
 
   const savedConfig = loadDeployConfig();
