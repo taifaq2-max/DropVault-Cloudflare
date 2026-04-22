@@ -1,43 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent, act } from "@testing-library/react";
 import React from "react";
-import { makeStuckAbortableXHR } from "./helpers/xhrHelpers";
-
-// ---------------------------------------------------------------------------
-// XHR mock — response queue controls whether each R2 PUT succeeds or fails.
-// Shift a status code off xhrResponseQueue on every send().  If the queue is
-// exhausted fall back to 200 (success).
-// ---------------------------------------------------------------------------
-
-let xhrResponseQueue: number[] = [];
-
-class MockXHR {
-  status = 0;
-  upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
-    onprogress: null,
-  };
-  onload: (() => void) | null = null;
-  onerror: (() => void) | null = null;
-  onabort: (() => void) | null = null;
-  ontimeout: (() => void) | null = null;
-
-  open(_method: string, _url: string) {}
-  setRequestHeader(_key: string, _value: string) {}
-
-  abort() {
-    this.onabort?.();
-  }
-
-  send(_data: unknown) {
-    const responseStatus =
-      xhrResponseQueue.length > 0 ? xhrResponseQueue.shift()! : 200;
-    const self = this;
-    setTimeout(() => {
-      self.status = responseStatus;
-      self.onload?.();
-    }, 0);
-  }
-}
+import { makeStuckAbortableXHR, MockXHR, setXhrResponseQueue } from "./helpers/xhrHelpers";
 
 // ---------------------------------------------------------------------------
 // Module mocks — must be declared before any import of the component
@@ -234,7 +198,7 @@ const { default: SenderPage } = await import("@/pages/SenderPage");
 
 beforeEach(() => {
   vi.clearAllMocks();
-  xhrResponseQueue = [500, 200];
+  setXhrResponseQueue([500, 200]);
   vi.stubGlobal("XMLHttpRequest", MockXHR);
 
   mockCreateShareUploadUrl.mockResolvedValue({
@@ -319,7 +283,7 @@ describe("SenderPage — R2 upload retry flow", () => {
   it("shows an error and keeps the Retry Upload button when confirmShare fails after a successful PUT", async () => {
     // First PUT returns 500 → Retry Upload button appears.
     // Second PUT returns 200 → confirmShare is called and rejects.
-    xhrResponseQueue = [500, 200];
+    setXhrResponseQueue([500, 200]);
     mockConfirmShare.mockRejectedValue(
       new Error("Server unavailable. Please try again.")
     );
@@ -352,7 +316,7 @@ describe("SenderPage — R2 upload retry flow", () => {
   it("shows an error and keeps the Retry Upload button when confirmShare fails after a successful PUT (file-upload mode)", async () => {
     // First PUT returns 500 → Retry Upload button appears.
     // Second PUT returns 200 → confirmShare is called and rejects.
-    xhrResponseQueue = [500, 200];
+    setXhrResponseQueue([500, 200]);
     mockConfirmShare.mockRejectedValue(
       new Error("Server unavailable. Please try again.")
     );
@@ -590,7 +554,7 @@ describe("SenderPage — R2 upload retry flow", () => {
   });
 
   it("keeps the Retry Upload button available when the retried upload also fails", async () => {
-    xhrResponseQueue = [500, 500];
+    setXhrResponseQueue([500, 500]);
 
     await renderAndPrepare();
 
@@ -617,7 +581,7 @@ describe("SenderPage — R2 upload retry flow", () => {
   });
 
   it("keeps the Retry Upload button available when the retried file upload also fails", async () => {
-    xhrResponseQueue = [500, 500];
+    setXhrResponseQueue([500, 500]);
 
     await renderInFilesMode("example.txt");
 
@@ -648,7 +612,7 @@ describe("SenderPage — R2 upload retry flow", () => {
     // Then a stuck XHR is installed before the retry so the retry PUT never resolves.
 
     // Initial submit uses MockXHR (500 → shows Retry Upload).
-    xhrResponseQueue = [500];
+    setXhrResponseQueue([500]);
 
     await renderInFilesMode("example.txt");
 
@@ -1030,7 +994,7 @@ describe("SenderPage — Cancel button during upload", () => {
     // Then a stuck XHR is installed before the retry so the retry PUT never resolves.
 
     // Initial submit uses MockXHR (500 → shows Retry Upload).
-    xhrResponseQueue = [500];
+    setXhrResponseQueue([500]);
 
     await renderAndPrepare();
 
@@ -1128,7 +1092,7 @@ describe("SenderPage — Encrypting, Uploading, and Confirming phase labels", ()
 
   it("shows Confirming… while confirmShare is in-flight", async () => {
     // XHR returns 200 immediately; confirmShare never resolves.
-    xhrResponseQueue = [200];
+    setXhrResponseQueue([200]);
     mockConfirmShare.mockImplementationOnce(
       () => new Promise(() => {})
     );
