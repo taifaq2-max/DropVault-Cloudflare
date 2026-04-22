@@ -717,3 +717,75 @@ describe("SenderPage — Cancel button during file processing", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tests: Encrypting, Uploading, and Confirming progress labels
+// ---------------------------------------------------------------------------
+
+describe("SenderPage — Encrypting, Uploading, and Confirming phase labels", () => {
+  it("shows Encrypting… while encryptPayload is in-flight", async () => {
+    // Keep encryption pending indefinitely so we can inspect the label.
+    mockEncryptPayload.mockImplementationOnce(
+      () => new Promise<string>(() => {})
+    );
+
+    await renderAndPrepare();
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    await waitFor(() => {
+      expect(screen.getByText("Encrypting\u2026")).toBeInTheDocument();
+    });
+  });
+
+  it("shows Uploading… while the XHR PUT is in-flight", async () => {
+    // Replace XHR with a version whose send() never fires onload so the
+    // uploading phase stays visible indefinitely.
+    class NeverResolvingXHR {
+      status = 0;
+      upload: { onprogress: ((e: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } = {
+        onprogress: null,
+      };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onabort: (() => void) | null = null;
+      ontimeout: (() => void) | null = null;
+      open(_method: string, _url: string) {}
+      setRequestHeader(_key: string, _value: string) {}
+      send(_data: unknown) {
+        // Intentionally does not call onload — keeps the upload in-flight.
+      }
+    }
+    vi.stubGlobal("XMLHttpRequest", NeverResolvingXHR);
+
+    await renderAndPrepare();
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    await waitFor(() => {
+      expect(screen.getByText("Uploading\u2026")).toBeInTheDocument();
+    });
+  });
+
+  it("shows Confirming… while confirmShare is in-flight", async () => {
+    // XHR returns 200 immediately; confirmShare never resolves.
+    xhrResponseQueue = [200];
+    mockConfirmShare.mockImplementationOnce(
+      () => new Promise(() => {})
+    );
+
+    await renderAndPrepare();
+
+    const submitBtn = screen.getByRole("button", { name: /create secure share/i });
+    act(() => { fireEvent.click(submitBtn); });
+    await act(async () => {});
+
+    await waitFor(() => {
+      expect(screen.getByText("Confirming\u2026")).toBeInTheDocument();
+    });
+  });
+});
