@@ -119,7 +119,7 @@ async function verifyCaptcha(token: string, ip: string): Promise<boolean> {
   return data.success === true;
 }
 
-const MAX_SHARE_SIZE_BYTES = 2.5 * 1024 * 1024; // 2.5 MB
+const MAX_SHARE_SIZE_BYTES = 420 * 1024 * 1024; // 420 MB
 const MIN_MEMORY_MB = 10; // Require at least 10 MB free
 
 const HUMOROUS_ERRORS = [
@@ -199,7 +199,7 @@ router.post("/shares", async (req: Request, res: Response) => {
   if (body.totalSize > MAX_SHARE_SIZE_BYTES) {
     res.status(413).json({
       error: "payload_too_large",
-      message: "Total payload exceeds 2.5 MB limit",
+      message: "Total payload exceeds 420 MB limit",
     });
     return;
   }

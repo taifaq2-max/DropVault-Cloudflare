@@ -38,8 +38,8 @@ const HCAPTCHA_SITE_KEY = import.meta.env.VITE_HCAPTCHA_SITE_KEY as string | und
 const USE_R2_UPLOADS = import.meta.env.VITE_USE_R2_UPLOADS === "true";
 
 const MAX_TOTAL_BYTES = USE_R2_UPLOADS
-  ? 420 * 1024 * 1024    // 420 MB — R2 direct-upload path
-  : 2.5 * 1024 * 1024;   // 2.5 MB — inline KV path; matches Express dev server limit
+  ? 420 * 1024 * 1024   // 420 MB — R2 direct-upload path
+  : 2.5 * 1024 * 1024;  // 2.5 MB — inline KV path; matches Express dev server limit
 const MAX_FILES = 10;
 
 interface FileItem {

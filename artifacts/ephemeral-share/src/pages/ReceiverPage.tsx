@@ -43,12 +43,12 @@ interface FileDownloadState {
 
 interface GetShareData {
   /**
-   * Base64-encoded ciphertext — present for inline KV shares (≤ 2.5 MB).
+   * Base64-encoded ciphertext — present for inline KV shares (≤ 4 MB encoded).
    * Null/missing for R2-backed shares; use `dataUrl` instead.
    */
   encryptedData?: string | null;
   /**
-   * Presigned R2 GET URL — present for large R2-backed shares (> 2.5 MB).
+   * Presigned R2 GET URL — present for large R2-backed shares (> 4 MB, up to 420 MB).
    * The browser fetches the ciphertext text directly from this URL.
    */
   dataUrl?: string | null;
@@ -117,6 +117,7 @@ export default function ReceiverPage() {
   const [zipProgress, setZipProgress] = useState(0);
   const [zipping, setZipping] = useState(false);
   const [decryptProgress, setDecryptProgress] = useState(0);
+  const [downloadProgress, setDownloadProgress] = useState(-1);
 
   // hCaptcha state
   const [captchaToken, setCaptchaToken] = useState("");
@@ -359,13 +360,44 @@ export default function ReceiverPage() {
   /**
    * Resolve ciphertext from either the inline field or a presigned R2 URL.
    * R2 objects contain the raw base64 ciphertext string written by the sender.
+   * When fetching from R2, streams the response body to report download progress.
    */
-  const resolveCiphertext = async (data: GetShareData): Promise<string> => {
+  const resolveCiphertext = async (
+    data: GetShareData,
+    onDownloadProgress?: (percent: number) => void
+  ): Promise<string> => {
     if (data.encryptedData) return data.encryptedData;
     if (data.dataUrl) {
       const r2Res = await fetch(data.dataUrl);
       if (!r2Res.ok) throw new Error(`Failed to fetch encrypted data from storage (${r2Res.status}).`);
-      return r2Res.text();
+
+      const contentLength = r2Res.headers.get("Content-Length");
+      const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+      if (!r2Res.body || total === 0 || !onDownloadProgress) {
+        return r2Res.text();
+      }
+
+      onDownloadProgress(0);
+      const reader = r2Res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let received = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        received += value.length;
+        onDownloadProgress(Math.min(Math.round((received / total) * 100), 100));
+      }
+
+      const combined = new Uint8Array(received);
+      let offset = 0;
+      for (const chunk of chunks) {
+        combined.set(chunk, offset);
+        offset += chunk.length;
+      }
+      return new TextDecoder().decode(combined);
     }
     throw new Error("No encrypted data available in share response.");
   };
@@ -378,12 +410,13 @@ export default function ReceiverPage() {
   ) => {
     setPhase("decrypting");
     setDecryptProgress(0);
+    setDownloadProgress(-1);
     try {
       // Accept either a GetShareData object (new path) or a raw ciphertext string (legacy).
       const encryptedData: string =
         typeof shareOrData === "string"
           ? shareOrData
-          : await resolveCiphertext(shareOrData);
+          : await resolveCiphertext(shareOrData, (pct) => setDownloadProgress(pct));
 
       let key: CryptoKey;
 
@@ -723,13 +756,36 @@ export default function ReceiverPage() {
             <motion.div key="decrypting" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="text-center space-y-4">
               <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
                 className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full mx-auto" />
-              <div className="font-mono text-sm text-muted-foreground">
-                {decryptProgress > 0 ? `Decrypting… ${decryptProgress}%` : "Decrypting..."}
-              </div>
-              {decryptProgress > 0 && (
-                <div className="max-w-xs mx-auto">
-                  <ProgressBar value={decryptProgress} />
+              {downloadProgress >= 0 ? (
+                <div className="max-w-xs mx-auto space-y-3">
+                  {/* Step 1: Download */}
+                  <div className="space-y-1">
+                    <div className={`font-mono text-sm flex justify-between ${downloadProgress < 100 ? "text-primary" : "text-muted-foreground"}`}>
+                      <span>{downloadProgress < 100 ? "Downloading…" : "Downloaded"}</span>
+                      <span>{downloadProgress}%</span>
+                    </div>
+                    <ProgressBar value={downloadProgress} />
+                  </div>
+                  {/* Step 2: Decrypt */}
+                  <div className="space-y-1">
+                    <div className={`font-mono text-sm flex justify-between ${downloadProgress >= 100 ? "text-primary" : "text-muted-foreground/50"}`}>
+                      <span>{decryptProgress > 0 ? "Decrypting…" : "Decrypt"}</span>
+                      <span>{decryptProgress > 0 ? `${decryptProgress}%` : "—"}</span>
+                    </div>
+                    {decryptProgress > 0 && <ProgressBar value={decryptProgress} />}
+                  </div>
                 </div>
+              ) : (
+                <>
+                  <div className="font-mono text-sm text-muted-foreground">
+                    {decryptProgress > 0 ? `Decrypting… ${decryptProgress}%` : "Decrypting..."}
+                  </div>
+                  {decryptProgress > 0 && (
+                    <div className="max-w-xs mx-auto">
+                      <ProgressBar value={decryptProgress} />
+                    </div>
+                  )}
+                </>
               )}
             </motion.div>
           )}

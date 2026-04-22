@@ -16,7 +16,7 @@ const VALID_TTLS = new Set([300, 600, 1800, 3600, 14400, 86400, 604800]);
 const MAX_INLINE_ENCODED = 4 * 1024 * 1024 * 1.5; // 4 MB * 1.5 base64 overhead
 
 /** Maximum total share size including overhead — enforced for both paths. */
-export const MAX_SHARE_BYTES = 420 * 1024 * 1024;
+export const MAX_SHARE_BYTES = 420 * 1024 * 1024; // 420 MB
 
 export const MAX_FILES = 10;
 

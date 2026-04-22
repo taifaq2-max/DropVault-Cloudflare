@@ -32,10 +32,10 @@ describe("POST /api/shares", () => {
     expect(res.body.error).toBe("validation_error");
   });
 
-  it("rejects a payload exceeding 2.5 MB (413)", async () => {
+  it("rejects a payload exceeding 420 MB (413)", async () => {
     const res = await request(app)
       .post("/api/shares")
-      .send({ ...VALID_SHARE_BODY, totalSize: 3 * 1024 * 1024 });
+      .send({ ...VALID_SHARE_BODY, totalSize: 500 * 1024 * 1024 });
     expect(res.status).toBe(413);
     expect(res.body.error).toBe("payload_too_large");
   });
