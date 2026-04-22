@@ -47,6 +47,9 @@ Thumbs.db
 # Wrangler local secrets (never commit real values)
 .dev.vars
 
+# Saved deployment config (non-secret answers for re-runs — local only)
+.deploy.config.json
+
 # Replit
 .cache/
 .local/
