@@ -49,21 +49,61 @@ jobs:
         run: pnpm --filter @workspace/ephemeral-share run build
 
       - name: Deploy Worker
+        id: deploy-worker
         working-directory: artifacts/cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: pnpm exec wrangler deploy
+        run: |
+          set -o pipefail
+          pnpm exec wrangler deploy 2>&1 | tee /tmp/worker-deploy.log
+          WORKER_URL=$(grep -oE 'https://[^ ]+\.workers\.dev[^ ]*' /tmp/worker-deploy.log | tail -1 || true)
+          if [ -n "$WORKER_URL" ]; then
+            echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
+            {
+              echo "## Worker Deployment"
+              echo "**URL:** [$WORKER_URL]($WORKER_URL)"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Worker Deployment" >> $GITHUB_STEP_SUMMARY
+            echo "Deploy succeeded — URL not parsed from output." >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Deploy frontend to Cloudflare Pages
+        id: deploy-pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
+          set -o pipefail
           ./artifacts/cloudflare/node_modules/.bin/wrangler pages deploy \
             artifacts/ephemeral-share/dist/public \
             --project-name "${{ secrets.CF_PAGES_PROJECT }}" \
-            --commit-dirty=true
+            --commit-dirty=true 2>&1 | tee /tmp/pages-deploy.log
+          PAGES_URL=$(grep -oE 'https://[^ ]+\.pages\.dev[^ ]*' /tmp/pages-deploy.log | tail -1 || true)
+          if [ -n "$PAGES_URL" ]; then
+            echo "pages_url=$PAGES_URL" >> $GITHUB_OUTPUT
+            {
+              echo "## Pages Deployment"
+              echo "**URL:** [$PAGES_URL]($PAGES_URL)"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Pages Deployment" >> $GITHUB_STEP_SUMMARY
+            echo "Deploy succeeded — URL not parsed from output." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Report failure in summary
+        if: failure()
+        run: |
+          {
+            echo "## Deployment Failed"
+            if [ "${{ steps.deploy-worker.outcome }}" = "failure" ]; then
+              echo "- Worker deploy step failed"
+            fi
+            if [ "${{ steps.deploy-pages.outcome }}" = "failure" ]; then
+              echo "- Pages deploy step failed"
+            fi
+          } >> $GITHUB_STEP_SUMMARY
 
   deploy-staging:
     name: Test, Build & Deploy (staging)
@@ -109,18 +149,58 @@ jobs:
         run: pnpm --filter @workspace/ephemeral-share run build
 
       - name: Deploy Worker (staging)
+        id: deploy-worker
         working-directory: artifacts/cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: pnpm exec wrangler deploy --env staging
+        run: |
+          set -o pipefail
+          pnpm exec wrangler deploy --env staging 2>&1 | tee /tmp/worker-deploy.log
+          WORKER_URL=$(grep -oE 'https://[^ ]+\.workers\.dev[^ ]*' /tmp/worker-deploy.log | tail -1 || true)
+          if [ -n "$WORKER_URL" ]; then
+            echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
+            {
+              echo "## Worker Deployment (staging)"
+              echo "**URL:** [$WORKER_URL]($WORKER_URL)"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Worker Deployment (staging)" >> $GITHUB_STEP_SUMMARY
+            echo "Deploy succeeded — URL not parsed from output." >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Deploy frontend to Cloudflare Pages (staging)
+        id: deploy-pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
+          set -o pipefail
           ./artifacts/cloudflare/node_modules/.bin/wrangler pages deploy \
             artifacts/ephemeral-share/dist/public \
             --project-name "${{ secrets.CF_PAGES_PROJECT_STAGING }}" \
-            --commit-dirty=true
+            --commit-dirty=true 2>&1 | tee /tmp/pages-deploy.log
+          PAGES_URL=$(grep -oE 'https://[^ ]+\.pages\.dev[^ ]*' /tmp/pages-deploy.log | tail -1 || true)
+          if [ -n "$PAGES_URL" ]; then
+            echo "pages_url=$PAGES_URL" >> $GITHUB_OUTPUT
+            {
+              echo "## Pages Deployment (staging)"
+              echo "**URL:** [$PAGES_URL]($PAGES_URL)"
+            } >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## Pages Deployment (staging)" >> $GITHUB_STEP_SUMMARY
+            echo "Deploy succeeded — URL not parsed from output." >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Report failure in summary
+        if: failure()
+        run: |
+          {
+            echo "## Deployment Failed"
+            if [ "${{ steps.deploy-worker.outcome }}" = "failure" ]; then
+              echo "- Worker deploy step failed"
+            fi
+            if [ "${{ steps.deploy-pages.outcome }}" = "failure" ]; then
+              echo "- Pages deploy step failed"
+            fi
+          } >> $GITHUB_STEP_SUMMARY
