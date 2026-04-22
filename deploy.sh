@@ -25,6 +25,30 @@ for arg in "$@"; do
   esac
 done
 
+# ── local config file (non-secret defaults from a previous run) ───────────────
+CONFIG_FILE="$REPO_ROOT/.deploy.cfg"
+
+_SAVED_CF_ACCOUNT_ID="" _SAVED_WORKER_NAME="" _SAVED_R2_BUCKET=""
+_SAVED_PAGES_PROJECT="" _SAVED_ROUTING_OPTION="" _SAVED_CUSTOM_DOMAIN=""
+_SAVED_HCAPTCHA_SITE_KEY="" _SAVED_ENABLE_R2=""
+if [[ -f "$CONFIG_FILE" ]]; then
+  while IFS='=' read -r _key _val; do
+    [[ "$_key" =~ ^[[:space:]]*# ]] && continue
+    [[ -z "$_key" ]] && continue
+    _val="${_val%$'\r'}"
+    case "$_key" in
+      CF_ACCOUNT_ID)     _SAVED_CF_ACCOUNT_ID="$_val" ;;
+      WORKER_NAME)       _SAVED_WORKER_NAME="$_val" ;;
+      R2_BUCKET)         _SAVED_R2_BUCKET="$_val" ;;
+      PAGES_PROJECT)     _SAVED_PAGES_PROJECT="$_val" ;;
+      ROUTING_OPTION)    _SAVED_ROUTING_OPTION="$_val" ;;
+      CUSTOM_DOMAIN)     _SAVED_CUSTOM_DOMAIN="$_val" ;;
+      HCAPTCHA_SITE_KEY) _SAVED_HCAPTCHA_SITE_KEY="$_val" ;;
+      ENABLE_R2)         _SAVED_ENABLE_R2="$_val" ;;
+    esac
+  done < "$CONFIG_FILE"
+fi
+
 # ── colours (disabled when not a terminal) ───────────────────────────────────
 if [[ -t 1 ]]; then
   RED='\033[0;31m' GREEN='\033[0;32m' YELLOW='\033[1;33m'
@@ -151,8 +175,10 @@ echo "  Secret fields are masked (you won't see the characters as you type)."
 echo
 
 # Account ID
-read -r -p "  Cloudflare Account ID: " CF_ACCOUNT_ID
+_def_account="${_SAVED_CF_ACCOUNT_ID}"
+read -r -p "  Cloudflare Account ID${_def_account:+ [${_def_account}]}: " CF_ACCOUNT_ID
 CF_ACCOUNT_ID="${CF_ACCOUNT_ID// /}"
+CF_ACCOUNT_ID="${CF_ACCOUNT_ID:-$_def_account}"
 [[ -z "$CF_ACCOUNT_ID" ]] && die "Account ID is required. Find it at: https://dash.cloudflare.com → right sidebar."
 
 # API token (REST API — Pages env vars + R2 CORS)
@@ -167,18 +193,21 @@ CF_API_TOKEN="${CF_API_TOKEN// /}"
 
 # Worker name
 echo
-read -r -p "  Worker name [vaultdrop-api]: " WORKER_NAME
-WORKER_NAME="${WORKER_NAME:-vaultdrop-api}"
+_def_worker="${_SAVED_WORKER_NAME:-vaultdrop-api}"
+read -r -p "  Worker name [${_def_worker}]: " WORKER_NAME
+WORKER_NAME="${WORKER_NAME:-$_def_worker}"
 WORKER_NAME="${WORKER_NAME// /}"
 
 # R2 bucket name
-read -r -p "  R2 bucket name [vaultdrop-shares]: " R2_BUCKET
-R2_BUCKET="${R2_BUCKET:-vaultdrop-shares}"
+_def_bucket="${_SAVED_R2_BUCKET:-vaultdrop-shares}"
+read -r -p "  R2 bucket name [${_def_bucket}]: " R2_BUCKET
+R2_BUCKET="${R2_BUCKET:-$_def_bucket}"
 R2_BUCKET="${R2_BUCKET// /}"
 
 # Pages project name
-read -r -p "  Cloudflare Pages project name [vaultdrop]: " PAGES_PROJECT
-PAGES_PROJECT="${PAGES_PROJECT:-vaultdrop}"
+_def_pages="${_SAVED_PAGES_PROJECT:-vaultdrop}"
+read -r -p "  Cloudflare Pages project name [${_def_pages}]: " PAGES_PROJECT
+PAGES_PROJECT="${PAGES_PROJECT:-$_def_pages}"
 PAGES_PROJECT="${PAGES_PROJECT// /}"
 
 # Routing option
@@ -189,16 +218,19 @@ echo "       /api/* is served by the Worker at the same origin — no cross-orig
 echo "    B) Pages Function proxy  (no custom domain; works with *.pages.dev)"
 echo "       The included Pages Function forwards /api/* to the Worker."
 echo
-read -r -p "  Routing option [B]: " ROUTING_OPTION
-ROUTING_OPTION="${ROUTING_OPTION:-B}"
+_def_routing="${_SAVED_ROUTING_OPTION:-B}"
+read -r -p "  Routing option [${_def_routing}]: " ROUTING_OPTION
+ROUTING_OPTION="${ROUTING_OPTION:-$_def_routing}"
 ROUTING_OPTION="${ROUTING_OPTION^^}"
 [[ "$ROUTING_OPTION" != "A" && "$ROUTING_OPTION" != "B" ]] && die "Enter A or B."
 
 CUSTOM_DOMAIN=""
 FRONTEND_URL=""
 if [[ "$ROUTING_OPTION" == "A" ]]; then
-  read -r -p "  Custom domain (e.g. vaultdrop.example.com): " CUSTOM_DOMAIN
+  _def_domain="${_SAVED_CUSTOM_DOMAIN}"
+  read -r -p "  Custom domain${_def_domain:+ [${_def_domain}]} (e.g. vaultdrop.example.com): " CUSTOM_DOMAIN
   CUSTOM_DOMAIN="${CUSTOM_DOMAIN// /}"
+  CUSTOM_DOMAIN="${CUSTOM_DOMAIN:-$_def_domain}"
   [[ -z "$CUSTOM_DOMAIN" ]] && die "Custom domain is required for Option A."
   FRONTEND_URL="https://$CUSTOM_DOMAIN"
 fi
@@ -222,7 +254,9 @@ echo
 read -rs -p "  hCaptcha secret key (hidden, Enter to skip CAPTCHA): " HCAPTCHA_SECRET_KEY; echo
 HCAPTCHA_SITE_KEY=""
 if [[ -n "$HCAPTCHA_SECRET_KEY" ]]; then
-  read -r -p "  hCaptcha site key (public widget key, not secret): " HCAPTCHA_SITE_KEY
+  _def_site_key="${_SAVED_HCAPTCHA_SITE_KEY}"
+  read -r -p "  hCaptcha site key (public widget key, not secret)${_def_site_key:+ [${_def_site_key}]}: " HCAPTCHA_SITE_KEY
+  HCAPTCHA_SITE_KEY="${HCAPTCHA_SITE_KEY:-$_def_site_key}"
 fi
 
 # R2 large-file support
@@ -230,8 +264,9 @@ echo
 echo "  Large-file (>4 MB, up to 420 MB) uploads require R2 API credentials."
 echo "  Create an R2 API token at: Cloudflare Dashboard → R2 → Manage R2 API Tokens"
 echo "  Required permission: Object Read & Write, scoped to bucket '$R2_BUCKET'."
-read -r -p "  Enable large-file R2 uploads? [y/N]: " ENABLE_R2
-ENABLE_R2="${ENABLE_R2:-N}"
+_def_r2="${_SAVED_ENABLE_R2:-N}"
+read -r -p "  Enable large-file R2 uploads? [${_def_r2}]: " ENABLE_R2
+ENABLE_R2="${ENABLE_R2:-$_def_r2}"
 ENABLE_R2="${ENABLE_R2^^}"
 
 R2_KEY_ID="" R2_KEY_SECRET=""
@@ -657,3 +692,17 @@ else
   echo -e "  Your app is live at: ${BOLD}$PAGES_URL${NC}"
 fi
 echo
+
+# ── Save non-secret config for future runs ────────────────────────────────────
+{
+  echo "# deploy.sh saved config — non-secret values only (auto-generated)"
+  echo "CF_ACCOUNT_ID=$CF_ACCOUNT_ID"
+  echo "WORKER_NAME=$WORKER_NAME"
+  echo "R2_BUCKET=$R2_BUCKET"
+  echo "PAGES_PROJECT=$PAGES_PROJECT"
+  echo "ROUTING_OPTION=$ROUTING_OPTION"
+  echo "CUSTOM_DOMAIN=$CUSTOM_DOMAIN"
+  echo "HCAPTCHA_SITE_KEY=$HCAPTCHA_SITE_KEY"
+  echo "ENABLE_R2=$ENABLE_R2"
+} > "$CONFIG_FILE"
+info "Non-secret config saved to $(basename "$CONFIG_FILE") — next run will use these as defaults."
