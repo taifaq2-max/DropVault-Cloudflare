@@ -341,6 +341,26 @@ pnpm exec wrangler deploy --env staging
 
 ---
 
+## Teardown
+
+To remove all Cloudflare resources created by the deployment script, run:
+
+```bash
+node scripts/teardown.mjs
+```
+
+The script will:
+
+1. Prompt for your Cloudflare API token and Account ID (Account ID is pre-filled from `.deploy.config.json` if available).
+2. Show a full list of resources it will permanently delete (Workers, Pages project, KV namespaces, R2 buckets).
+3. Require you to type `yes` to confirm before making any changes.
+4. Delete R2 bucket contents before removing the buckets — Cloudflare rejects deletion of non-empty buckets.
+5. Silently skip any resources that no longer exist, so re-running is safe.
+
+> **Warning**: R2 bucket deletion permanently destroys all encrypted share data. Existing share links will stop working immediately.
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
