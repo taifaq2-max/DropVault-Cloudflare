@@ -19,6 +19,7 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
 const WRANGLER_TOML = path.join(REPO_ROOT, "artifacts", "cloudflare", "wrangler.toml");
+const DEPLOY_CONFIG = path.join(REPO_ROOT, ".deploy.config.json");
 
 // ---------------------------------------------------------------------------
 // ANSI colour helpers
@@ -115,28 +116,58 @@ function askSecret(question) {
   });
 }
 
-async function askChoice(question, choices) {
+async function askChoice(question, choices, defaultChoice) {
   console.log(`  ${cyan("?")} ${question}`);
   choices.forEach((ch, i) => console.log(`    ${dim(`${i + 1}.`)} ${ch}`));
+  const defaultIndex = defaultChoice !== undefined
+    ? choices.findIndex((c) => c === defaultChoice)
+    : -1;
+  const defaultNum = defaultIndex >= 0 ? String(defaultIndex + 1) : "1";
   while (true) {
-    const raw = await ask(`  Enter number (1-${choices.length})`, "1");
+    const raw = await ask(`  Enter number (1-${choices.length})`, defaultNum);
     const n = parseInt(raw, 10);
     if (n >= 1 && n <= choices.length) return choices[n - 1];
     warn(`Please enter a number between 1 and ${choices.length}.`);
   }
 }
 
-async function askMultiChoice(question, choices) {
+async function askMultiChoice(question, choices, defaultChoices) {
   console.log(`  ${cyan("?")} ${question}`);
   choices.forEach((ch, i) => console.log(`    ${dim(`${i + 1}.`)} ${ch}`));
+  const defaultIndices = Array.isArray(defaultChoices) && defaultChoices.length > 0
+    ? defaultChoices.map((dc) => choices.findIndex((c) => c === dc) + 1).filter((n) => n > 0)
+    : [1];
+  const defaultVal = defaultIndices.length > 0 ? defaultIndices.join(",") : "1";
   while (true) {
-    const raw = await ask(`  Enter numbers separated by commas (e.g. 1,2)`, "1");
+    const raw = await ask(`  Enter numbers separated by commas (e.g. 1,2)`, defaultVal);
     const parts = raw.split(",").map((s) => parseInt(s.trim(), 10)).filter((n) => !isNaN(n));
     const valid = parts.every((n) => n >= 1 && n <= choices.length);
     if (valid && parts.length > 0) {
       return [...new Set(parts)].map((n) => choices[n - 1]);
     }
     warn(`Please enter valid numbers between 1 and ${choices.length}.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Deploy config persistence (non-secret answers only)
+// ---------------------------------------------------------------------------
+
+function loadDeployConfig() {
+  try {
+    const raw = fs.readFileSync(DEPLOY_CONFIG, "utf8");
+    return JSON.parse(raw);
+  } catch (_) {
+    return {};
+  }
+}
+
+function saveDeployConfig(values) {
+  try {
+    fs.writeFileSync(DEPLOY_CONFIG, JSON.stringify(values, null, 2) + "\n", "utf8");
+    ok(`Non-secret config saved to ${dim(".deploy.config.json")} for future re-runs`);
+  } catch (e) {
+    warn(`Could not save deploy config: ${e.message}`);
   }
 }
 
@@ -451,6 +482,12 @@ async function main() {
 
   createRL();
 
+  const savedConfig = loadDeployConfig();
+  if (Object.keys(savedConfig).length > 0) {
+    info(`Loaded saved config from ${dim(".deploy.config.json")} — press Enter to accept each default.`);
+    console.log();
+  }
+
   // ─────────────────────────────────────────────────────────────────────────
   // Step 1 — Collect configuration
   // ─────────────────────────────────────────────────────────────────────────
@@ -468,12 +505,13 @@ async function main() {
     `Find your Account ID at: ${cyan("https://dash.cloudflare.com")} → right sidebar\n` +
     `    or run: ${bold("pnpm exec wrangler whoami")}`,
   );
-  CF_ACCOUNT_ID = await ask("Cloudflare Account ID");
+  CF_ACCOUNT_ID = await ask("Cloudflare Account ID", savedConfig.accountId);
   if (!CF_ACCOUNT_ID) { fail("Account ID is required. Aborting."); process.exit(1); }
 
   const envTargets = await askMultiChoice(
     "Which environments do you want to deploy?",
     ["production", "staging"],
+    savedConfig.envTargets,
   );
   const deployProduction = envTargets.includes("production");
   const deployStaging = envTargets.includes("staging");
@@ -481,18 +519,18 @@ async function main() {
   const routingOption = await askChoice("Routing option for API calls:", [
     "Option A — Custom domain + Worker Routes (recommended for production)",
     "Option B — Pages Function proxy (no custom domain, *.pages.dev)",
-  ]);
+  ], savedConfig.routingOption);
   const useOptionA = routingOption.startsWith("Option A");
 
   let customDomain = "";
   if (useOptionA) {
-    customDomain = await ask("Custom domain (e.g. vaultdrop.example.com)");
+    customDomain = await ask("Custom domain (e.g. vaultdrop.example.com)", savedConfig.customDomain);
     if (!customDomain) warn("No custom domain provided — falling back to Option B routing.");
   }
 
   console.log();
   info("hCaptcha integration (optional — leave blank to skip)");
-  const hcaptchaSiteKey = await ask("hCaptcha site key (blank to skip)");
+  const hcaptchaSiteKey = await ask("hCaptcha site key (blank to skip)", savedConfig.hcaptchaSiteKey);
   let hcaptchaSecretKey = "";
   if (hcaptchaSiteKey) hcaptchaSecretKey = await askSecret("hCaptcha secret key");
 
@@ -507,7 +545,7 @@ async function main() {
   const r2SecretAccessKey = await askSecret("R2 API token — Secret Access Key");
   if (!r2SecretAccessKey) { fail("R2 Secret Access Key is required. Aborting."); process.exit(1); }
 
-  const pagesProjectName = await ask("Cloudflare Pages project name", "vaultdrop");
+  const pagesProjectName = await ask("Cloudflare Pages project name", savedConfig.pagesProjectName || "vaultdrop");
 
   rl.close();
 
@@ -886,6 +924,16 @@ async function main() {
     console.log(`  ${yellow("Manual steps still required:")}`);
     followUps.forEach((s, i) => console.log(`\n  ${yellow(`${i + 1}.`)} ${s}`));
   }
+
+  console.log();
+  saveDeployConfig({
+    accountId: CF_ACCOUNT_ID,
+    envTargets,
+    routingOption,
+    customDomain,
+    hcaptchaSiteKey,
+    pagesProjectName,
+  });
 
   console.log();
   ok(green("VaultDrop deployment finished successfully."));
