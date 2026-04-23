@@ -51,6 +51,9 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Test deploy.sh saved-defaults
+        run: bash tests/deploy-saved-defaults.sh
+
   notify-on-failure:
     name: Email on scheduled failure
     runs-on: ubuntu-latest
