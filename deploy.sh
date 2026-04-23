@@ -2,11 +2,13 @@
 # =============================================================================
 # deploy.sh — Interactive VaultDrop Cloudflare Deployment Script
 #
-# Usage:  bash deploy.sh [--dry-run]
+# Usage:  bash deploy.sh [--dry-run] [--reset-config]
 # Run from the repository root.  No prior Cloudflare knowledge required.
 #
-# --dry-run  Collect all inputs and print a full deployment plan, but make
-#            NO changes to Cloudflare, wrangler.toml, or the filesystem.
+# --dry-run       Collect all inputs and print a full deployment plan, but make
+#                 NO changes to Cloudflare, wrangler.toml, or the filesystem.
+# --reset-config  Delete the saved configuration file (.deploy.cfg) and exit.
+#                 Use this to start fresh, e.g. when switching Cloudflare accounts.
 # =============================================================================
 set -euo pipefail
 IFS=$'\n\t'
@@ -18,15 +20,32 @@ WRANGLER_TOML="$CF_DIR/wrangler.toml"
 
 # ── parse flags ───────────────────────────────────────────────────────────────
 DRY_RUN=false
+RESET_CONFIG=false
 for arg in "$@"; do
   case "$arg" in
-    --dry-run) DRY_RUN=true ;;
+    --dry-run)      DRY_RUN=true ;;
+    --reset-config) RESET_CONFIG=true ;;
     *) echo "Unknown argument: $arg" >&2; exit 1 ;;
   esac
 done
 
+if [[ "$RESET_CONFIG" == true && "$DRY_RUN" == true ]]; then
+  echo "Error: --reset-config and --dry-run cannot be used together." >&2
+  exit 1
+fi
+
 # ── local config file (non-secret defaults from a previous run) ───────────────
 CONFIG_FILE="$REPO_ROOT/.deploy.cfg"
+
+if [[ "$RESET_CONFIG" == true ]]; then
+  if [[ -f "$CONFIG_FILE" ]]; then
+    rm "$CONFIG_FILE"
+    echo "Saved configuration deleted ($CONFIG_FILE). You will be prompted for all values on the next run."
+  else
+    echo "No saved configuration found ($CONFIG_FILE). Nothing to reset."
+  fi
+  exit 0
+fi
 
 _SAVED_CF_ACCOUNT_ID="" _SAVED_WORKER_NAME="" _SAVED_R2_BUCKET=""
 _SAVED_PAGES_PROJECT="" _SAVED_ROUTING_OPTION="" _SAVED_CUSTOM_DOMAIN=""
