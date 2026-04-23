@@ -46,7 +46,18 @@ jobs:
         run: pnpm typecheck
 
       - name: Build
+        env:
+          VITE_HCAPTCHA_SITE_KEY: ${{ secrets.VITE_HCAPTCHA_SITE_KEY }}
+          VITE_USE_R2_UPLOADS: ${{ secrets.VITE_USE_R2_UPLOADS }}
         run: pnpm build
+
+      - name: Upload dist artifact
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ephemeral-share-dist
+          path: artifacts/ephemeral-share/dist
+          retention-days: 1
 
       - name: Test
         run: pnpm test

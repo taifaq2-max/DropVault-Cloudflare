@@ -2,21 +2,30 @@ name: Deploy to Cloudflare
 
 on:
   push:
-    branches: [main, staging]
+    branches: [staging]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
   cancel-in-progress: true
 
 jobs:
   deploy-production:
-    name: Test, Build & Deploy (production)
-    if: github.ref == 'refs/heads/main'
+    name: Download & Deploy (production)
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -43,14 +52,13 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run tests
-        run: pnpm test
-
-      - name: Build frontend
-        env:
-          VITE_HCAPTCHA_SITE_KEY: ${{ secrets.VITE_HCAPTCHA_SITE_KEY }}
-          VITE_USE_R2_UPLOADS: ${{ secrets.VITE_USE_R2_UPLOADS }}
-        run: pnpm --filter @workspace/ephemeral-share run build
+      - name: Download dist artifact from CI
+        uses: actions/download-artifact@v4
+        with:
+          name: ephemeral-share-dist
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts/ephemeral-share/dist
 
       - name: Deploy Worker
         id: deploy-worker
@@ -111,7 +119,7 @@ jobs:
 
   deploy-staging:
     name: Test, Build & Deploy (staging)
-    if: github.ref == 'refs/heads/staging'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
     runs-on: ubuntu-latest
 
     steps:
