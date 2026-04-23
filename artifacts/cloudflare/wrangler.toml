@@ -68,8 +68,8 @@ new_classes = ["ShareAccessGate", "NonceStore", "RateLimiter"]
 name = "vaultdrop-api-staging"
 
 [env.staging.vars]
-FRONTEND_URL = ""
-CLOUDFLARE_ACCOUNT_ID = ""
+FRONTEND_URL = "https://dropvault-staging.pages.dev"
+CLOUDFLARE_ACCOUNT_ID = "afa9b88dd463bd146aae514d6e80dc17"
 R2_BUCKET_NAME = "vaultdrop-shares-staging"
 
 [[env.staging.kv_namespaces]]

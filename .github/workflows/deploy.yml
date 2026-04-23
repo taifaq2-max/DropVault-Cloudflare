@@ -148,6 +148,30 @@ jobs:
           VITE_USE_R2_UPLOADS: ${{ secrets.VITE_USE_R2_UPLOADS }}
         run: pnpm --filter @workspace/ephemeral-share run build
 
+      - name: Set staging Worker secrets
+        working-directory: artifacts/cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          STAGING_SESSION_SECRET: ${{ secrets.STAGING_SESSION_SECRET }}
+          STAGING_HCAPTCHA_SECRET_KEY: ${{ secrets.STAGING_HCAPTCHA_SECRET_KEY }}
+          STAGING_R2_ACCESS_KEY_ID: ${{ secrets.STAGING_R2_ACCESS_KEY_ID }}
+          STAGING_R2_ACCESS_KEY_SECRET: ${{ secrets.STAGING_R2_ACCESS_KEY_SECRET }}
+        run: |
+          missing=()
+          [ -z "$STAGING_SESSION_SECRET" ]       && missing+=(STAGING_SESSION_SECRET)
+          [ -z "$STAGING_HCAPTCHA_SECRET_KEY" ]  && missing+=(STAGING_HCAPTCHA_SECRET_KEY)
+          [ -z "$STAGING_R2_ACCESS_KEY_ID" ]     && missing+=(STAGING_R2_ACCESS_KEY_ID)
+          [ -z "$STAGING_R2_ACCESS_KEY_SECRET" ] && missing+=(STAGING_R2_ACCESS_KEY_SECRET)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required staging secrets: ${missing[*]}"
+            exit 1
+          fi
+          echo "$STAGING_SESSION_SECRET"       | pnpm exec wrangler secret put SESSION_SECRET       --env staging
+          echo "$STAGING_HCAPTCHA_SECRET_KEY"  | pnpm exec wrangler secret put HCAPTCHA_SECRET_KEY  --env staging
+          echo "$STAGING_R2_ACCESS_KEY_ID"     | pnpm exec wrangler secret put R2_ACCESS_KEY_ID     --env staging
+          echo "$STAGING_R2_ACCESS_KEY_SECRET" | pnpm exec wrangler secret put R2_ACCESS_KEY_SECRET --env staging
+
       - name: Deploy Worker (staging)
         id: deploy-worker
         working-directory: artifacts/cloudflare
