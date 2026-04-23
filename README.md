@@ -1,5 +1,8 @@
 # VaultDrop
 
+[![Deploy production](https://github.com/taifaq2-max/DropVault/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/taifaq2-max/DropVault/actions/workflows/deploy.yml)
+[![Deploy staging](https://github.com/taifaq2-max/DropVault/actions/workflows/deploy.yml/badge.svg?branch=staging)](https://github.com/taifaq2-max/DropVault/actions/workflows/deploy.yml)
+
 **Zero-knowledge, one-time file and text sharing. Encrypted in your browser. Gone after one read.**
 
 VaultDrop lets you share sensitive files or text through a self-destructing link. All encryption happens client-side using the Web Crypto API — the server only ever sees ciphertext. The decryption key lives exclusively in the URL fragment and is never transmitted to the server.
