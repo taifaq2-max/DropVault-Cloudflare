@@ -3,7 +3,8 @@
  * VaultDrop — Cloudflare Teardown Script
  *
  * Run from the repo root:
- *   node scripts/teardown.mjs
+ *   node scripts/teardown.mjs           — interactive teardown (deletes resources)
+ *   node scripts/teardown.mjs --dry-run — preview what would be deleted, no changes made
  *
  * Deletes all Cloudflare resources provisioned by scripts/deploy.mjs:
  *   - Worker scripts (production + staging)
@@ -507,15 +508,61 @@ function isNotFound(e) {
 }
 
 // ---------------------------------------------------------------------------
+// Dry-run checks — read-only existence probes for each resource type
+// ---------------------------------------------------------------------------
+
+async function checkWorker(workerName) {
+  try {
+    await cfApi(`/accounts/${CF_ACCOUNT_ID}/workers/scripts/${workerName}`);
+    return true;
+  } catch (e) {
+    if (isNotFound(e)) return false;
+    throw e;
+  }
+}
+
+async function checkPagesProject(projectName) {
+  try {
+    await cfApi(`/accounts/${CF_ACCOUNT_ID}/pages/projects/${projectName}`);
+    return true;
+  } catch (e) {
+    if (isNotFound(e)) return false;
+    throw e;
+  }
+}
+
+let _cachedKvNamespaces = null;
+async function checkKvNamespace(title) {
+  if (!_cachedKvNamespaces) _cachedKvNamespaces = await listKvNamespaces();
+  return _cachedKvNamespaces.some((ns) => ns.title === title);
+}
+
+let _cachedR2Buckets = null;
+async function checkR2Bucket(name) {
+  if (!_cachedR2Buckets) _cachedR2Buckets = await listR2Buckets();
+  return _cachedR2Buckets.some((b) => b.name === name);
+}
+
+// ---------------------------------------------------------------------------
 // MAIN
 // ---------------------------------------------------------------------------
 async function main() {
-  banner("VaultDrop — Cloudflare Teardown");
+  const DRY_RUN = process.argv.includes("--dry-run");
 
-  console.log(
-    `This script ${red("permanently deletes")} all Cloudflare resources created by\n` +
-    `the VaultDrop deployment script. This action ${bold("cannot be undone")}.\n`,
-  );
+  if (DRY_RUN) {
+    banner("VaultDrop — Teardown Dry Run");
+    console.log(
+      `${bold("Dry-run mode:")} resources will be ${cyan("checked but not deleted")}.\n` +
+      `Re-run without ${dim("--dry-run")} to perform the actual teardown.\n`,
+    );
+  } else {
+    banner("VaultDrop — Cloudflare Teardown");
+
+    console.log(
+      `This script ${red("permanently deletes")} all Cloudflare resources created by\n` +
+      `the VaultDrop deployment script. This action ${bold("cannot be undone")}.\n`,
+    );
+  }
 
   // Read resource names from wrangler.toml so this script stays in sync even
   // when names are customised.
@@ -565,6 +612,51 @@ async function main() {
     { type: "R2 bucket",     name: cfg.r2BucketProd },
     { type: "R2 bucket",     name: cfg.r2BucketStaging },
   ];
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // DRY-RUN: probe each resource for existence and exit without deleting
+  // ─────────────────────────────────────────────────────────────────────────
+  if (DRY_RUN) {
+    console.log();
+    console.log(`  ${bold("Checking live resource status…")}`);
+    console.log();
+
+    const typeWidth = Math.max(...resources.map((r) => r.type.length));
+    let liveCount = 0;
+
+    for (const r of resources) {
+      const typeLabel = r.type.padEnd(typeWidth);
+      let exists;
+      if (r.type === "Worker")        exists = await checkWorker(r.name);
+      else if (r.type === "Pages project") exists = await checkPagesProject(r.name);
+      else if (r.type === "KV namespace") exists = await checkKvNamespace(r.name);
+      else if (r.type === "R2 bucket")    exists = await checkR2Bucket(r.name);
+
+      if (exists) {
+        liveCount++;
+        const dataWarning =
+          r.type === "R2 bucket" ? red("  ⚠ ALL STORED FILES WOULD BE LOST") : "";
+        const kvWarning =
+          r.type === "KV namespace" ? yellow("  ⚠ all share metadata would be lost") : "";
+        console.log(`    ${dim(typeLabel)}  ${bold(r.name)}  ${green("EXISTS — would be deleted")}${dataWarning}${kvWarning}`);
+      } else {
+        console.log(`    ${dim(typeLabel)}  ${bold(r.name)}  ${dim("not found — would be skipped")}`);
+      }
+    }
+
+    console.log();
+    if (liveCount > 0) {
+      warn(`${liveCount} resource(s) are live and would be deleted by a real teardown.`);
+      warn("R2 buckets would be drained (all objects deleted) before removal.");
+    } else {
+      ok("No live resources found — a real teardown would have nothing to delete.");
+    }
+    console.log();
+    info(`Re-run without ${dim("--dry-run")} to perform the actual teardown.`);
+    console.log();
+    closeRL();
+    process.exit(0);
+  }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Print what will be deleted
