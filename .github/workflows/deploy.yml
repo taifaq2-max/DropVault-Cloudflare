@@ -4,6 +4,10 @@ on:
   push:
     branches: [main, staging]
 
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   deploy-production:
     name: Test, Build & Deploy (production)
