@@ -134,24 +134,28 @@ chmod +x "$ABS_WRANGLER"
 # Export so stubs can reference it at runtime as an env var
 export INVOCATION_LOG
 
+# =============================================================================
+# Scenario 1 — Routing option B (Pages proxy, no custom domain)
+# =============================================================================
+
 # ── known inputs (simulating interactive answers) ─────────────────────────────
-# Prompts in order during --dry-run:
+# Prompts in order during --dry-run (option B):
 #   1. Cloudflare Account ID
 #   2. Cloudflare API Token (read -s, hidden)
 #   3. Worker name            [default: vaultdrop-api]
 #   4. R2 bucket name         [default: vaultdrop-shares]
 #   5. Cloudflare Pages project name [default: vaultdrop]
-#   6. Routing option         [default: B]
+#   6. Routing option         → B
 #   7. SESSION_SECRET         (Enter → auto-generate)
 #   8. hCaptcha secret key    (Enter → skip CAPTCHA)
-#   9. Enable large-file R2 uploads? [default: N]
+#   9. Enable large-file R2 uploads? → N
 
 ACCOUNT_ID="acct-12345678"
 WORKER_NAME="my-vaultdrop-worker"
 R2_BUCKET="my-vaultdrop-bucket"
 PAGES_PROJECT="my-vaultdrop-pages"
 
-INPUT="$(printf '%s\n' \
+INPUT_B="$(printf '%s\n' \
   "$ACCOUNT_ID" \
   "fake-api-token" \
   "$WORKER_NAME" \
@@ -163,9 +167,10 @@ INPUT="$(printf '%s\n' \
   "N" \
 )"
 
-# ── run deploy.sh --dry-run ───────────────────────────────────────────────────
+# ── run deploy.sh --dry-run (scenario 1) ─────────────────────────────────────
 
 echo
+echo "=== Scenario 1: Option B (Pages proxy, no custom domain) ==="
 echo "Running: bash deploy.sh --dry-run"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
@@ -174,48 +179,48 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 ACTUAL_OUTPUT=""
 EXIT_CODE=0
 ACTUAL_OUTPUT=$(PATH="$FAKE_BIN:$PATH" bash "$REPO_ROOT/deploy.sh" --dry-run \
-  <<< "$INPUT" 2>&1) || EXIT_CODE=$?
+  <<< "$INPUT_B" 2>&1) || EXIT_CODE=$?
 
 echo "$ACTUAL_OUTPUT"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo
 
-# ── assertions ───────────────────────────────────────────────────────────────
+# ── assertions (scenario 1) ───────────────────────────────────────────────────
 
-echo "Assertions:"
+echo "Assertions (Scenario 1 — Option B):"
 
 # 1. Exit code must be 0
-assert_exit_zero "exit code is 0" "$EXIT_CODE"
+assert_exit_zero "[B] exit code is 0" "$EXIT_CODE"
 
 # 2. Dry-run banner
-assert_contains "dry-run banner present" \
+assert_contains "[B] dry-run banner present" \
   "DRY-RUN MODE" "$ACTUAL_OUTPUT"
 
 # 3. Deployment plan heading
-assert_contains "deployment plan heading" \
+assert_contains "[B] deployment plan heading" \
   "DEPLOYMENT PLAN" "$ACTUAL_OUTPUT"
 
 # 4. Worker name in plan
-assert_contains "worker name appears in plan" \
+assert_contains "[B] worker name appears in plan" \
   "$WORKER_NAME" "$ACTUAL_OUTPUT"
 
 # 5. R2 bucket name in plan
-assert_contains "R2 bucket name appears in plan" \
+assert_contains "[B] R2 bucket name appears in plan" \
   "$R2_BUCKET" "$ACTUAL_OUTPUT"
 
 # 6. Pages project name in plan
-assert_contains "Pages project name appears in plan" \
+assert_contains "[B] Pages project name appears in plan" \
   "$PAGES_PROJECT" "$ACTUAL_OUTPUT"
 
 # 7. Account ID in plan
-assert_contains "Cloudflare account ID appears in plan" \
+assert_contains "[B] Cloudflare account ID appears in plan" \
   "$ACCOUNT_ID" "$ACTUAL_OUTPUT"
 
 # 8. KV namespace titles (derived as <worker>-SHARE_KV and <worker>-SHARE_KV_preview)
-assert_contains "production KV namespace title in plan" \
+assert_contains "[B] production KV namespace title in plan" \
   "${WORKER_NAME}-SHARE_KV" "$ACTUAL_OUTPUT"
 
-assert_contains "preview KV namespace title in plan" \
+assert_contains "[B] preview KV namespace title in plan" \
   "${WORKER_NAME}-SHARE_KV_preview" "$ACTUAL_OUTPUT"
 
 # 9. All major deployment steps mentioned
@@ -232,17 +237,163 @@ for step_label in \
   "Step 11 — Set Pages environment variables" \
   "Step 13 — Final Pages redeploy"
 do
-  assert_contains "plan includes '${step_label}'" "$step_label" "$ACTUAL_OUTPUT"
+  assert_contains "[B] plan includes '${step_label}'" "$step_label" "$ACTUAL_OUTPUT"
 done
 
 # 10. Closing "no changes" notice
-assert_contains "closing no-changes notice present" \
+assert_contains "[B] closing no-changes notice present" \
   "No Cloudflare API calls, no wrangler commands, and no file" "$ACTUAL_OUTPUT"
 
-# 11. Neither wrangler nor curl were actually invoked (checks both PATH stub
-#     and absolute-path stub via the shared INVOCATION_LOG).
-assert_file_empty "wrangler was not invoked (PATH or absolute path)" "$INVOCATION_LOG"
-assert_file_empty "curl was not invoked"                             "$INVOCATION_LOG"
+# 11. Neither wrangler nor curl were actually invoked
+assert_file_empty "[B] wrangler was not invoked (PATH or absolute path)" "$INVOCATION_LOG"
+assert_file_empty "[B] curl was not invoked"                             "$INVOCATION_LOG"
+
+# 12. Step 12 (R2 CORS) must NOT appear when R2 is disabled
+assert_not_contains "[B] Step 12 absent without R2" \
+  "Step 12" "$ACTUAL_OUTPUT"
+
+# =============================================================================
+# Scenario 2 — Routing option A (custom domain + Worker Routes, R2 enabled)
+# =============================================================================
+
+# ── known inputs (simulating interactive answers) ─────────────────────────────
+# Prompts in order during --dry-run (option A, R2 enabled):
+#   1. Cloudflare Account ID
+#   2. Cloudflare API Token (read -s, hidden)
+#   3. Worker name            [default: vaultdrop-api]
+#   4. R2 bucket name         [default: vaultdrop-shares]
+#   5. Cloudflare Pages project name [default: vaultdrop]
+#   6. Routing option         → A
+#   7. Custom domain          → vaultdrop.example.com
+#   8. SESSION_SECRET         (Enter → auto-generate)
+#   9. hCaptcha secret key    (Enter → skip CAPTCHA)
+#  10. Enable large-file R2 uploads? → Y
+#  11. R2 Access Key ID
+#  12. R2 Secret Access Key   (read -s, hidden)
+
+CUSTOM_DOMAIN_A="vaultdrop.example.com"
+WORKER_NAME_A="my-worker-option-a"
+R2_BUCKET_A="my-bucket-option-a"
+PAGES_PROJECT_A="my-pages-option-a"
+R2_KEY_ID_A="fake-r2-key-id"
+R2_KEY_SECRET_A="fake-r2-secret"
+
+INPUT_A="$(printf '%s\n' \
+  "$ACCOUNT_ID" \
+  "fake-api-token" \
+  "$WORKER_NAME_A" \
+  "$R2_BUCKET_A" \
+  "$PAGES_PROJECT_A" \
+  "A" \
+  "$CUSTOM_DOMAIN_A" \
+  "" \
+  "" \
+  "Y" \
+  "$R2_KEY_ID_A" \
+  "$R2_KEY_SECRET_A" \
+)"
+
+# Reset the invocation log between scenarios so leakage is caught per-scenario.
+> "$INVOCATION_LOG"
+
+# ── run deploy.sh --dry-run (scenario 2) ─────────────────────────────────────
+
+echo
+echo "=== Scenario 2: Option A (custom domain + Worker Routes, R2 enabled) ==="
+echo "Running: bash deploy.sh --dry-run"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+ACTUAL_OUTPUT_A=""
+EXIT_CODE_A=0
+ACTUAL_OUTPUT_A=$(PATH="$FAKE_BIN:$PATH" bash "$REPO_ROOT/deploy.sh" --dry-run \
+  <<< "$INPUT_A" 2>&1) || EXIT_CODE_A=$?
+
+echo "$ACTUAL_OUTPUT_A"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+
+# ── assertions (scenario 2) ───────────────────────────────────────────────────
+
+echo "Assertions (Scenario 2 — Option A):"
+
+# 1. Exit code must be 0
+assert_exit_zero "[A] exit code is 0" "$EXIT_CODE_A"
+
+# 2. Dry-run banner
+assert_contains "[A] dry-run banner present" \
+  "DRY-RUN MODE" "$ACTUAL_OUTPUT_A"
+
+# 3. Deployment plan heading
+assert_contains "[A] deployment plan heading" \
+  "DEPLOYMENT PLAN" "$ACTUAL_OUTPUT_A"
+
+# 4. Custom domain must appear in the configuration summary
+assert_contains "[A] custom domain appears in plan" \
+  "$CUSTOM_DOMAIN_A" "$ACTUAL_OUTPUT_A"
+
+# 5. FRONTEND_URL set to custom domain in Step 3 (wrangler.toml changes)
+assert_contains "[A] FRONTEND_URL set to custom domain in Step 3" \
+  "FRONTEND_URL" "$ACTUAL_OUTPUT_A"
+
+# 6. Worker name in plan
+assert_contains "[A] worker name appears in plan" \
+  "$WORKER_NAME_A" "$ACTUAL_OUTPUT_A"
+
+# 7. R2 bucket name in plan
+assert_contains "[A] R2 bucket name appears in plan" \
+  "$R2_BUCKET_A" "$ACTUAL_OUTPUT_A"
+
+# 8. Pages project name in plan
+assert_contains "[A] Pages project name appears in plan" \
+  "$PAGES_PROJECT_A" "$ACTUAL_OUTPUT_A"
+
+# 9. Account ID in plan
+assert_contains "[A] Cloudflare account ID appears in plan" \
+  "$ACCOUNT_ID" "$ACTUAL_OUTPUT_A"
+
+# 10. KV namespace titles
+assert_contains "[A] production KV namespace title in plan" \
+  "${WORKER_NAME_A}-SHARE_KV" "$ACTUAL_OUTPUT_A"
+
+assert_contains "[A] preview KV namespace title in plan" \
+  "${WORKER_NAME_A}-SHARE_KV_preview" "$ACTUAL_OUTPUT_A"
+
+# 11. All major deployment steps mentioned (Step 10 is Option B only, excluded here)
+for step_label in \
+  "Step 1 — Install dependencies" \
+  "Step 2 — Cloudflare authentication" \
+  "Step 3 — wrangler.toml changes" \
+  "Step 4 — KV namespace provisioning" \
+  "Step 5 — R2 bucket provisioning" \
+  "Step 6 — Worker secrets" \
+  "Step 7 — Deploy Worker" \
+  "Step 8 — Build frontend" \
+  "Step 9 — Deploy to Cloudflare Pages" \
+  "Step 11 — Set Pages environment variables" \
+  "Step 13 — Final Pages redeploy"
+do
+  assert_contains "[A] plan includes '${step_label}'" "$step_label" "$ACTUAL_OUTPUT_A"
+done
+
+# 12. Step 12 (R2 CORS policy) must appear — triggered by FRONTEND_URL + R2_KEY_ID
+assert_contains "[A] Step 12 (R2 CORS policy) present" \
+  "Step 12 — R2 CORS policy" "$ACTUAL_OUTPUT_A"
+
+# 13. Step 12 lists the custom domain as the allowed origin
+assert_contains "[A] Step 12 lists custom domain as AllowedOrigin" \
+  "https://$CUSTOM_DOMAIN_A" "$ACTUAL_OUTPUT_A"
+
+# 14. Step 10 (Option B CORS update) must NOT appear for Option A
+assert_not_contains "[A] Step 10 (Option B only) absent" \
+  "Step 10" "$ACTUAL_OUTPUT_A"
+
+# 15. Closing "no changes" notice
+assert_contains "[A] closing no-changes notice present" \
+  "No Cloudflare API calls, no wrangler commands, and no file" "$ACTUAL_OUTPUT_A"
+
+# 16. Neither wrangler nor curl were actually invoked
+assert_file_empty "[A] wrangler was not invoked (PATH or absolute path)" "$INVOCATION_LOG"
+assert_file_empty "[A] curl was not invoked"                             "$INVOCATION_LOG"
 
 # ── summary ──────────────────────────────────────────────────────────────────
 
