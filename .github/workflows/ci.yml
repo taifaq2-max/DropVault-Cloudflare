@@ -54,6 +54,9 @@ jobs:
       - name: Test deploy.sh saved-defaults
         run: bash tests/deploy-saved-defaults.sh
 
+      - name: Test deploy.sh dry-run
+        run: bash tests/deploy-dry-run.sh
+
   notify-on-failure:
     name: Email on scheduled failure
     runs-on: ubuntu-latest
