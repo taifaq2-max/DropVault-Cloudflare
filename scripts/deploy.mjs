@@ -346,7 +346,7 @@ async function cfApi(urlPath, method = "GET", body = undefined) {
  *   Workers Scripts (Edit), Cloudflare Pages (Edit), Account Settings (Read),
  *   User: API Tokens (Read).
  */
-async function validateCfToken() {
+export async function validateCfToken() {
   info("Validating API token…");
 
   let verifyJson;
