@@ -1250,4 +1250,59 @@ describe("SenderPage — file size limit enforcement", () => {
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(/Total payload exceeds/i);
   });
+
+  it("shows a 'Total payload exceeds' error when two files whose combined size exceeds 420 MB are added", async () => {
+    const { container } = render(React.createElement(SenderPage));
+
+    const filesTab = screen.getByRole("button", { name: /^files$/i });
+    await act(async () => {
+      fireEvent.click(filesTab);
+    });
+
+    const fileInput = container.querySelector(
+      'input[type="file"]'
+    ) as HTMLInputElement;
+
+    // First file: 210 MB — well within the 420 MB limit on its own.
+    const firstFile = new File([], "part-one.bin", {
+      type: "application/octet-stream",
+    });
+    Object.defineProperty(firstFile, "size", {
+      value: 210 * 1024 * 1024,
+      configurable: true,
+    });
+
+    Object.defineProperty(fileInput, "files", {
+      value: [firstFile],
+      configurable: true,
+    });
+    await act(async () => {
+      fireEvent.change(fileInput);
+    });
+
+    // After the first file alone, no error should be shown.
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    // Second file: 210 MB + 1 byte — combined with the first file this exceeds
+    // the 420 MB cap by exactly one byte.
+    const secondFile = new File([], "part-two.bin", {
+      type: "application/octet-stream",
+    });
+    Object.defineProperty(secondFile, "size", {
+      value: 210 * 1024 * 1024 + 1,
+      configurable: true,
+    });
+
+    Object.defineProperty(fileInput, "files", {
+      value: [secondFile],
+      configurable: true,
+    });
+    await act(async () => {
+      fireEvent.change(fileInput);
+    });
+
+    // The combined size now exceeds the cap — the error must appear immediately.
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Total payload exceeds/i);
+  });
 });
