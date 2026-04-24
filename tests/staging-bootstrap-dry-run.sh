@@ -68,6 +68,13 @@ TMP_DIR="$(mktemp -d)"
 INVOCATION_LOG="$TMP_DIR/invocations.log"
 touch "$INVOCATION_LOG"
 
+# Capture absolute paths of tools needed by Scenario 4's restricted-PATH run.
+# The scenario replaces PATH entirely so only our fake-bin dir is visible; we
+# resolve these paths now (before any PATH manipulation) so we can stub or
+# pass-through the utilities the script needs before the prerequisite check.
+BASH_BIN="$(command -v bash)"
+DIRNAME_BIN="$(command -v dirname)"
+
 # The absolute wrangler path that staging-bootstrap.sh constructs.
 # We intercept this path so that any accidental direct invocation is captured.
 ABS_WRANGLER_DIR="$REPO_ROOT/artifacts/cloudflare/node_modules/.bin"
@@ -285,6 +292,68 @@ assert_contains      "[unknown-arg] error mentions the bad argument" \
   "Unknown argument" "$OUTPUT_3"
 assert_file_empty    "[unknown-arg] wrangler was not invoked" "$INVOCATION_LOG"
 assert_file_empty    "[unknown-arg] curl was not invoked"     "$INVOCATION_LOG"
+
+# =============================================================================
+# Scenario 4 — Missing prerequisites: script exits non-zero before any calls
+# =============================================================================
+# Build a fake-bin that contains ONLY wrangler and curl stubs (no git, pnpm,
+# or node), then run the script with PATH restricted to that directory.
+# The prerequisite check must detect the missing tools and abort immediately.
+
+> "$INVOCATION_LOG"
+
+MISSING_PREREQS_BIN="$TMP_DIR/missing-prereqs-bin"
+mkdir -p "$MISSING_PREREQS_BIN"
+
+# Provide the shell utilities the script needs before the prerequisite check,
+# but deliberately omit git, pnpm, and node so those checks fail cleanly.
+# Using /bin/sh in stubs because it is a fixed path that exists without PATH.
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$DIRNAME_BIN" > "$MISSING_PREREQS_BIN/dirname"
+
+printf '%s\n' "$WRANGLER_STUB_BODY" > "$MISSING_PREREQS_BIN/wrangler"
+printf '%s\n' "$CURL_STUB_BODY"    > "$MISSING_PREREQS_BIN/curl"
+chmod +x "$MISSING_PREREQS_BIN/dirname" "$MISSING_PREREQS_BIN/wrangler" "$MISSING_PREREQS_BIN/curl"
+
+echo
+echo "=== Scenario 4: Missing prerequisites (git, pnpm, and node absent) ==="
+echo "Running: bash scripts/staging-bootstrap.sh --dry-run (with restricted PATH)"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+OUTPUT_4=""
+EXIT_4=0
+OUTPUT_4=$(PATH="$MISSING_PREREQS_BIN" "$BASH_BIN" "$REPO_ROOT/scripts/staging-bootstrap.sh" --dry-run \
+  2>&1) || EXIT_4=$?
+
+echo "$OUTPUT_4"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+
+echo "Assertions (Scenario 4 — Missing prerequisites):"
+
+# 1. Script must exit non-zero
+assert_exit_nonzero "[missing-prereqs] exit code is non-zero" "$EXIT_4"
+
+# 2. Output must name at least one specific missing tool (not just "command not found")
+assert_contains "[missing-prereqs] git reported as missing" \
+  "git not found" "$OUTPUT_4"
+
+assert_contains "[missing-prereqs] pnpm reported as missing" \
+  "pnpm not found" "$OUTPUT_4"
+
+assert_contains "[missing-prereqs] node reported as missing" \
+  "node not found" "$OUTPUT_4"
+
+# 3. Script must emit the recovery hint
+assert_contains "[missing-prereqs] recovery hint shown" \
+  "Fix the issues above" "$OUTPUT_4"
+
+# 4. No spurious shell-level "command not found" noise from early-init utilities
+assert_not_contains "[missing-prereqs] no spurious dirname error" \
+  "dirname: command not found" "$OUTPUT_4"
+
+# 5. No Cloudflare calls (wrangler or curl) were made
+assert_file_empty "[missing-prereqs] wrangler was not invoked" "$INVOCATION_LOG"
+assert_file_empty "[missing-prereqs] curl was not invoked"     "$INVOCATION_LOG"
 
 # ── summary ──────────────────────────────────────────────────────────────────
 
