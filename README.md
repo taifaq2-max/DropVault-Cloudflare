@@ -1,5 +1,6 @@
 # VaultDrop
 
+[![CI](https://github.com/taifaq2-max/DropVault/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/taifaq2-max/DropVault/actions/workflows/ci.yml)
 [![Deploy production](https://github.com/taifaq2-max/DropVault/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/taifaq2-max/DropVault/actions/workflows/deploy.yml)
 [![Deploy staging](https://github.com/taifaq2-max/DropVault/actions/workflows/deploy.yml/badge.svg?branch=staging)](https://github.com/taifaq2-max/DropVault/actions/workflows/deploy.yml)
 
