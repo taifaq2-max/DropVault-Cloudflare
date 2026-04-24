@@ -32,8 +32,8 @@ R2_BUCKET_NAME = "vaultdrop-shares"
 # ---------------------------------------------------------------------------
 [[kv_namespaces]]
 binding = "SHARE_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_YOUR_KV_NAMESPACE_PREVIEW_ID"
+id = "5f2441962fcf41c79d41ce9d4e042b47"
+preview_id = "8418da1b1e274371bcd85be99f51dca2"
 
 # ---------------------------------------------------------------------------
 # R2 bucket — encrypted blob storage (direct-upload, not through Worker)
