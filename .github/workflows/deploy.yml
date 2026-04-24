@@ -7,242 +7,16 @@ on:
     branches: [main, staging]
 
 concurrency:
-  group: deploy-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
+  group: deploy-${{ github.event.workflow_run.head_branch }}
   cancel-in-progress: true
 
 jobs:
-  notify-skipped-production:
-    name: Skipped — CI did not pass (production)
-    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.conclusion != 'success'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Write skipped-deploy notice to summary
-        run: |
-          {
-            echo "## Production Deploy Skipped"
-            echo ""
-            echo "The deploy was **not triggered** because the CI run did not pass."
-            echo ""
-            echo "| Detail | Value |"
-            echo "| --- | --- |"
-            echo "| CI conclusion | \`${{ github.event.workflow_run.conclusion }}\` |"
-            echo "| Commit | \`${{ github.event.workflow_run.head_sha }}\` |"
-            echo "| Branch | \`${{ github.event.workflow_run.head_branch }}\` |"
-            echo "| CI run | [${{ github.event.workflow_run.id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}) |"
-            echo ""
-            echo "Fix the failing CI checks and push again to trigger a production deploy."
-          } >> $GITHUB_STEP_SUMMARY
-
-  deploy-production:
-    name: Download & Deploy (production)
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-
-    steps:
-      - name: Checkout repository
-        id: checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-
-      - name: Set up pnpm
-        id: setup-pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - name: Set up Node.js
-        id: setup-node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Get pnpm store directory
-        id: get-pnpm-store
-        shell: bash
-        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-
-      - name: Cache pnpm store
-        id: cache-pnpm
-        uses: actions/cache@v4
-        with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
-
-      - name: Install dependencies
-        id: install-deps
-        run: pnpm install --frozen-lockfile
-
-      - name: Download dist artifact from CI
-        id: download-artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ephemeral-share-dist-main
-          run-id: ${{ github.event.workflow_run.id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: artifacts/ephemeral-share/dist
-
-      - name: Check required production secrets
-        id: check-secrets
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          CF_PAGES_PROJECT: ${{ secrets.CF_PAGES_PROJECT }}
-          PRODUCTION_FRONTEND_URL: ${{ secrets.PRODUCTION_FRONTEND_URL }}
-        run: |
-          missing=()
-          [ -z "$CLOUDFLARE_API_TOKEN" ]    && missing+=(CLOUDFLARE_API_TOKEN)
-          [ -z "$CF_ACCOUNT_ID" ]           && missing+=(CF_ACCOUNT_ID)
-          [ -z "$CF_PAGES_PROJECT" ]        && missing+=(CF_PAGES_PROJECT)
-          [ -z "$PRODUCTION_FRONTEND_URL" ] && missing+=(PRODUCTION_FRONTEND_URL)
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::Missing required production secrets: ${missing[*]}"
-            exit 1
-          fi
-
-      - name: Deploy Worker
-        id: deploy-worker
-        working-directory: artifacts/cloudflare
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: |
-          set -o pipefail
-          pnpm exec wrangler deploy \
-            --var FRONTEND_URL:${{ secrets.PRODUCTION_FRONTEND_URL }} \
-            2>&1 | tee /tmp/worker-deploy.log
-          WORKER_URL=$(grep -oE 'https://[^ ]+\.workers\.dev[^ ]*' /tmp/worker-deploy.log | tail -1 || true)
-          if [ -n "$WORKER_URL" ]; then
-            echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
-            {
-              echo "## Worker Deployment"
-              echo "**URL:** [$WORKER_URL]($WORKER_URL)"
-            } >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## Worker Deployment" >> $GITHUB_STEP_SUMMARY
-            echo "Deploy succeeded — URL not parsed from output." >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Deploy frontend to Cloudflare Pages
-        id: deploy-pages
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-        run: |
-          set -o pipefail
-          ./artifacts/cloudflare/node_modules/.bin/wrangler pages deploy \
-            artifacts/ephemeral-share/dist/public \
-            --project-name "${{ secrets.CF_PAGES_PROJECT }}" \
-            --commit-dirty=true 2>&1 | tee /tmp/pages-deploy.log
-          PAGES_URL=$(grep -oE 'https://[^ ]+\.pages\.dev[^ ]*' /tmp/pages-deploy.log | tail -1 || true)
-          if [ -n "$PAGES_URL" ]; then
-            echo "pages_url=$PAGES_URL" >> $GITHUB_OUTPUT
-            {
-              echo "## Pages Deployment"
-              echo "**URL:** [$PAGES_URL]($PAGES_URL)"
-            } >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## Pages Deployment" >> $GITHUB_STEP_SUMMARY
-            echo "Deploy succeeded — URL not parsed from output." >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Report failure in summary
-        if: failure()
-        run: |
-          {
-            echo "## Deployment Failed"
-            if [ "${{ steps.deploy-worker.outcome }}" = "failure" ]; then
-              echo "- Worker deploy step failed"
-            fi
-            if [ "${{ steps.deploy-pages.outcome }}" = "failure" ]; then
-              echo "- Pages deploy step failed"
-            fi
-          } >> $GITHUB_STEP_SUMMARY
-
-      - name: Notify Slack on success
-        if: success()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          WORKER_URL: ${{ steps.deploy-worker.outputs.worker_url }}
-          PAGES_URL: ${{ steps.deploy-pages.outputs.pages_url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            curl -s -X POST "$SLACK_WEBHOOK_URL" \
-              -H "Content-Type: application/json" \
-              -d "{\"text\": \"*Production deploy succeeded* :white_check_mark:\\nCommit: \`${SHA}\`\\nWorker: ${WORKER_URL:-_(not captured)_}\\nPages: ${PAGES_URL:-_(not captured)_}\\n<${RUN_URL}|View run>\"}" || true
-          fi
-
-      - name: Compute failure details
-        if: failure()
-        run: |
-          failed=""
-          [ "${{ steps.checkout.outcome }}"          = "failure" ] && failed="${failed}\n• Checkout repository"
-          [ "${{ steps.setup-pnpm.outcome }}"        = "failure" ] && failed="${failed}\n• Set up pnpm"
-          [ "${{ steps.setup-node.outcome }}"        = "failure" ] && failed="${failed}\n• Set up Node.js"
-          [ "${{ steps.get-pnpm-store.outcome }}"    = "failure" ] && failed="${failed}\n• Get pnpm store directory"
-          [ "${{ steps.cache-pnpm.outcome }}"        = "failure" ] && failed="${failed}\n• Cache pnpm store"
-          [ "${{ steps.install-deps.outcome }}"      = "failure" ] && failed="${failed}\n• Install dependencies"
-          [ "${{ steps.download-artifact.outcome }}" = "failure" ] && failed="${failed}\n• Download dist artifact from CI"
-          [ "${{ steps.deploy-worker.outcome }}"     = "failure" ] && failed="${failed}\n• Deploy Worker"
-          [ "${{ steps.deploy-pages.outcome }}"      = "failure" ] && failed="${failed}\n• Deploy frontend to Cloudflare Pages"
-          if [ -z "$failed" ]; then
-            failed="\n• Unknown step (check the run log)"
-          fi
-          echo "FAILED_STEPS=$failed" >> $GITHUB_ENV
-
-      - name: Notify Slack on failure
-        if: failure()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            curl -s -X POST "$SLACK_WEBHOOK_URL" \
-              -H "Content-Type: application/json" \
-              -d "{\"text\": \"*Production deploy failed* :x:\\nCommit: \`${SHA}\`\\n<${RUN_URL}|View run>\"}" || true
-          fi
-
-      - name: Find superseding run (production)
-        if: cancelled()
-        id: find-superseding-run
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          NEWER_RUN_URL=$(gh api \
-            "/repos/${{ github.repository }}/actions/workflows/deploy.yml/runs?branch=main&per_page=10" \
-            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})] | sort_by(.id) | last | .html_url // empty" \
-            2>/dev/null || true)
-          if [ -n "$NEWER_RUN_URL" ]; then
-            echo "newer_run_url=$NEWER_RUN_URL" >> $GITHUB_OUTPUT
-          else
-            echo "newer_run_url=${{ github.server_url }}/${{ github.repository }}/actions/workflows/deploy.yml" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Notify Slack on cancellation
-        if: cancelled()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          NEWER_RUN_URL: ${{ steps.find-superseding-run.outputs.newer_run_url }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            curl -s -X POST "$SLACK_WEBHOOK_URL" \
-              -H "Content-Type: application/json" \
-              -d "{\"text\": \"*Production deploy superseded* :warning:\\nCommit: \`${SHA}\`\\nCancelled run: <${RUN_URL}|View>  Newer run: <${NEWER_RUN_URL}|View>\"}" || true
-          fi
-
   deploy-staging:
     name: Deploy (staging)
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'staging'
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'staging'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -250,30 +24,25 @@ jobs:
 
     steps:
       - name: Checkout repository
-        id: checkout
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up pnpm
-        id: setup-pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
       - name: Set up Node.js
-        id: setup-node
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
       - name: Get pnpm store directory
-        id: get-pnpm-store
         shell: bash
         run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
       - name: Cache pnpm store
-        id: cache-pnpm
         uses: actions/cache@v4
         with:
           path: ${{ env.STORE_PATH }}
@@ -282,11 +51,9 @@ jobs:
             ${{ runner.os }}-pnpm-store-
 
       - name: Install dependencies
-        id: install-deps
         run: pnpm install --frozen-lockfile
 
       - name: Download dist artifact from CI
-        id: download-artifact
         uses: actions/download-artifact@v4
         with:
           name: ephemeral-share-dist-staging
@@ -295,7 +62,6 @@ jobs:
           path: artifacts/ephemeral-share/dist
 
       - name: Check required staging secrets
-        id: check-secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -318,33 +84,18 @@ jobs:
             exit 1
           fi
 
-      - name: Set staging Worker secrets
-        id: set-secrets
+      - name: Push staging Worker secrets
         working-directory: artifacts/cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
-          STAGING_SESSION_SECRET: ${{ secrets.STAGING_SESSION_SECRET }}
-          STAGING_HCAPTCHA_SECRET_KEY: ${{ secrets.STAGING_HCAPTCHA_SECRET_KEY }}
-          STAGING_R2_ACCESS_KEY_ID: ${{ secrets.STAGING_R2_ACCESS_KEY_ID }}
-          STAGING_R2_ACCESS_KEY_SECRET: ${{ secrets.STAGING_R2_ACCESS_KEY_SECRET }}
         run: |
-          missing=()
-          [ -z "$STAGING_SESSION_SECRET" ]       && missing+=(STAGING_SESSION_SECRET)
-          [ -z "$STAGING_HCAPTCHA_SECRET_KEY" ]  && missing+=(STAGING_HCAPTCHA_SECRET_KEY)
-          [ -z "$STAGING_R2_ACCESS_KEY_ID" ]     && missing+=(STAGING_R2_ACCESS_KEY_ID)
-          [ -z "$STAGING_R2_ACCESS_KEY_SECRET" ] && missing+=(STAGING_R2_ACCESS_KEY_SECRET)
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::Missing required staging Worker secrets: ${missing[*]}"
-            exit 1
-          fi
-          echo "$STAGING_SESSION_SECRET"       | pnpm exec wrangler secret put SESSION_SECRET       --env staging
-          echo "$STAGING_HCAPTCHA_SECRET_KEY"  | pnpm exec wrangler secret put HCAPTCHA_SECRET_KEY  --env staging
-          echo "$STAGING_R2_ACCESS_KEY_ID"     | pnpm exec wrangler secret put R2_ACCESS_KEY_ID     --env staging
-          echo "$STAGING_R2_ACCESS_KEY_SECRET" | pnpm exec wrangler secret put R2_ACCESS_KEY_SECRET --env staging
+          echo "${{ secrets.STAGING_SESSION_SECRET }}"       | pnpm exec wrangler secret put SESSION_SECRET       --env staging
+          echo "${{ secrets.STAGING_HCAPTCHA_SECRET_KEY }}"  | pnpm exec wrangler secret put HCAPTCHA_SECRET_KEY  --env staging
+          echo "${{ secrets.STAGING_R2_ACCESS_KEY_ID }}"     | pnpm exec wrangler secret put R2_ACCESS_KEY_ID     --env staging
+          echo "${{ secrets.STAGING_R2_ACCESS_KEY_SECRET }}" | pnpm exec wrangler secret put R2_ACCESS_KEY_SECRET --env staging
 
       - name: Deploy Worker (staging)
-        id: deploy-worker
         working-directory: artifacts/cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -353,19 +104,10 @@ jobs:
           set -o pipefail
           pnpm exec wrangler deploy --env staging 2>&1 | tee /tmp/worker-deploy.log
           WORKER_URL=$(grep -oE 'https://[^ ]+\.workers\.dev[^ ]*' /tmp/worker-deploy.log | tail -1 || true)
-          if [ -n "$WORKER_URL" ]; then
-            echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT
-            {
-              echo "## Worker Deployment (staging)"
-              echo "**URL:** [$WORKER_URL]($WORKER_URL)"
-            } >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## Worker Deployment (staging)" >> $GITHUB_STEP_SUMMARY
-            echo "Deploy succeeded — URL not parsed from output." >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "## Staging Worker" >> $GITHUB_STEP_SUMMARY
+          echo "${WORKER_URL:-Deploy succeeded — URL not captured}" >> $GITHUB_STEP_SUMMARY
 
       - name: Deploy frontend to Cloudflare Pages (staging)
-        id: deploy-pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -376,103 +118,100 @@ jobs:
             --project-name "${{ secrets.CF_PAGES_PROJECT_STAGING }}" \
             --commit-dirty=true 2>&1 | tee /tmp/pages-deploy.log
           PAGES_URL=$(grep -oE 'https://[^ ]+\.pages\.dev[^ ]*' /tmp/pages-deploy.log | tail -1 || true)
-          if [ -n "$PAGES_URL" ]; then
-            echo "pages_url=$PAGES_URL" >> $GITHUB_OUTPUT
-            {
-              echo "## Pages Deployment (staging)"
-              echo "**URL:** [$PAGES_URL]($PAGES_URL)"
-            } >> $GITHUB_STEP_SUMMARY
-          else
-            echo "## Pages Deployment (staging)" >> $GITHUB_STEP_SUMMARY
-            echo "Deploy succeeded — URL not parsed from output." >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "## Staging Pages" >> $GITHUB_STEP_SUMMARY
+          echo "${PAGES_URL:-Deploy succeeded — URL not captured}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Report failure in summary
-        if: failure()
-        run: |
-          {
-            echo "## Deployment Failed"
-            if [ "${{ steps.deploy-worker.outcome }}" = "failure" ]; then
-              echo "- Worker deploy step failed"
-            fi
-            if [ "${{ steps.deploy-pages.outcome }}" = "failure" ]; then
-              echo "- Pages deploy step failed"
-            fi
-          } >> $GITHUB_STEP_SUMMARY
+  deploy-production:
+    name: Deploy (production)
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
 
-      - name: Notify Slack on success
-        if: success()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download dist artifact from CI
+        uses: actions/download-artifact@v4
+        with:
+          name: ephemeral-share-dist-main
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts/ephemeral-share/dist
+
+      - name: Check required production secrets
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          WORKER_URL: ${{ steps.deploy-worker.outputs.worker_url }}
-          PAGES_URL: ${{ steps.deploy-pages.outputs.pages_url }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_PAGES_PROJECT: ${{ secrets.CF_PAGES_PROJECT }}
+          PRODUCTION_FRONTEND_URL: ${{ secrets.PRODUCTION_FRONTEND_URL }}
         run: |
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            curl -s -X POST "$SLACK_WEBHOOK_URL" \
-              -H "Content-Type: application/json" \
-              -d "{\"text\": \"*Staging deploy succeeded* :white_check_mark:\\nCommit: \`${SHA}\`\\nWorker: ${WORKER_URL:-_(not captured)_}\\nPages: ${PAGES_URL:-_(not captured)_}\\n<${RUN_URL}|View run>\"}" || true
+          missing=()
+          [ -z "$CLOUDFLARE_API_TOKEN" ]    && missing+=(CLOUDFLARE_API_TOKEN)
+          [ -z "$CF_ACCOUNT_ID" ]           && missing+=(CF_ACCOUNT_ID)
+          [ -z "$CF_PAGES_PROJECT" ]        && missing+=(CF_PAGES_PROJECT)
+          [ -z "$PRODUCTION_FRONTEND_URL" ] && missing+=(PRODUCTION_FRONTEND_URL)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required production secrets: ${missing[*]}"
+            exit 1
           fi
 
-      - name: Compute failure details
-        if: failure()
-        run: |
-          failed=""
-          [ "${{ steps.checkout.outcome }}"         = "failure" ] && failed="${failed}\n• Checkout repository"
-          [ "${{ steps.setup-pnpm.outcome }}"       = "failure" ] && failed="${failed}\n• Set up pnpm"
-          [ "${{ steps.setup-node.outcome }}"       = "failure" ] && failed="${failed}\n• Set up Node.js"
-          [ "${{ steps.get-pnpm-store.outcome }}"   = "failure" ] && failed="${failed}\n• Get pnpm store directory"
-          [ "${{ steps.cache-pnpm.outcome }}"       = "failure" ] && failed="${failed}\n• Cache pnpm store"
-          [ "${{ steps.install-deps.outcome }}"     = "failure" ] && failed="${failed}\n• Install dependencies"
-          [ "${{ steps.download-artifact.outcome }}" = "failure" ] && failed="${failed}\n• Download dist artifact from CI"
-          [ "${{ steps.set-secrets.outcome }}"      = "failure" ] && failed="${failed}\n• Set staging Worker secrets"
-          [ "${{ steps.deploy-worker.outcome }}"    = "failure" ] && failed="${failed}\n• Deploy Worker"
-          [ "${{ steps.deploy-pages.outcome }}"     = "failure" ] && failed="${failed}\n• Deploy frontend to Cloudflare Pages"
-          if [ -z "$failed" ]; then
-            failed="\n• Unknown step (check the run log)"
-          fi
-          echo "FAILED_STEPS=$failed" >> $GITHUB_ENV
-
-      - name: Notify Slack on failure
-        if: failure()
+      - name: Deploy Worker (production)
+        working-directory: artifacts/cloudflare
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            curl -s -X POST "$SLACK_WEBHOOK_URL" \
-              -H "Content-Type: application/json" \
-              -d "{\"text\": \"*Staging deploy failed* :x:\\nCommit: \`${SHA}\`\\n<${RUN_URL}|View run>\"}" || true
-          fi
+          set -o pipefail
+          pnpm exec wrangler deploy \
+            --var FRONTEND_URL:${{ secrets.PRODUCTION_FRONTEND_URL }} \
+            2>&1 | tee /tmp/worker-deploy.log
+          WORKER_URL=$(grep -oE 'https://[^ ]+\.workers\.dev[^ ]*' /tmp/worker-deploy.log | tail -1 || true)
+          echo "## Production Worker" >> $GITHUB_STEP_SUMMARY
+          echo "${WORKER_URL:-Deploy succeeded — URL not captured}" >> $GITHUB_STEP_SUMMARY
 
-      - name: Find superseding run (staging)
-        if: cancelled()
-        id: find-superseding-run
+      - name: Deploy frontend to Cloudflare Pages (production)
         env:
-          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
-          NEWER_RUN_URL=$(gh api \
-            "/repos/${{ github.repository }}/actions/workflows/deploy.yml/runs?branch=staging&per_page=10" \
-            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})] | sort_by(.id) | last | .html_url // empty" \
-            2>/dev/null || true)
-          if [ -n "$NEWER_RUN_URL" ]; then
-            echo "newer_run_url=$NEWER_RUN_URL" >> $GITHUB_OUTPUT
-          else
-            echo "newer_run_url=${{ github.server_url }}/${{ github.repository }}/actions/workflows/deploy.yml" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Notify Slack on cancellation
-        if: cancelled()
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          NEWER_RUN_URL: ${{ steps.find-superseding-run.outputs.newer_run_url }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          if [ -n "$SLACK_WEBHOOK_URL" ]; then
-            curl -s -X POST "$SLACK_WEBHOOK_URL" \
-              -H "Content-Type: application/json" \
-              -d "{\"text\": \"*Staging deploy superseded* :warning:\\nCommit: \`${SHA}\`\\nCancelled run: <${RUN_URL}|View>  Newer run: <${NEWER_RUN_URL}|View>\"}" || true
-          fi
+          set -o pipefail
+          ./artifacts/cloudflare/node_modules/.bin/wrangler pages deploy \
+            artifacts/ephemeral-share/dist/public \
+            --project-name "${{ secrets.CF_PAGES_PROJECT }}" \
+            --commit-dirty=true 2>&1 | tee /tmp/pages-deploy.log
+          PAGES_URL=$(grep -oE 'https://[^ ]+\.pages\.dev[^ ]*' /tmp/pages-deploy.log | tail -1 || true)
+          echo "## Production Pages" >> $GITHUB_STEP_SUMMARY
+          echo "${PAGES_URL:-Deploy succeeded — URL not captured}" >> $GITHUB_STEP_SUMMARY
