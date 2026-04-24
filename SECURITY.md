@@ -55,6 +55,46 @@ VaultDrop is built with a zero-knowledge architecture. The following properties 
 
 ---
 
+## Branch Protection and CI Requirements
+
+### Staging branch — required status checks
+
+The `staging` branch must have a branch protection rule that requires the CI
+job to pass before any pull request can be merged.  This prevents a failing
+build, type error, or broken test from being deployed to the staging
+environment.
+
+**Required status check name:** `Typecheck & Build`
+(the `ci` job defined in `.github/workflows/ci.yml`)
+
+**How to configure (repository admin):**
+
+1. Go to **Settings → Branches** in the GitHub repository.
+2. Click **Add branch protection rule** (or edit the existing `staging` rule).
+3. Set the **Branch name pattern** to `staging`.
+4. Check **Require status checks to pass before merging**.
+5. Search for and select **`Typecheck & Build`** under the required checks.
+6. Optionally check **Require branches to be up to date before merging** for
+   stricter gating.
+7. Check **Do not allow bypassing the above settings** to enforce the rule for
+   admins as well.
+8. Save the rule.
+
+> **Status:** This rule is **active** on the `staging` branch of
+> `taifaq2-max/DropVault-Cloudflare`. It was applied via the GitHub API and
+> can be verified under **Settings → Branches → staging** or by calling:
+>
+> ```
+> GET /repos/taifaq2-max/DropVault-Cloudflare/branches/staging/protection
+> ```
+>
+> The response must include `required_status_checks.contexts: ["Typecheck & Build"]`
+> and `enforce_admins.enabled: true`.  Re-run this check periodically (e.g.
+> after any repository settings change or team membership update) to confirm
+> the rule has not drifted.
+
+---
+
 ## Security Best Practices for Self-Hosters
 
 If you are running your own instance of VaultDrop:
