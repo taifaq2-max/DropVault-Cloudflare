@@ -73,7 +73,7 @@ describe("validateCfToken", () => {
     await expect(validateCfToken()).rejects.toThrow("process.exit:1");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const logged = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const logged = consoleSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(logged).toMatch(/API token validation failed/);
   });
 
@@ -88,7 +88,7 @@ describe("validateCfToken", () => {
     await expect(validateCfToken()).rejects.toThrow("process.exit:1");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const logged = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const logged = consoleSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(logged).toMatch(/not active/);
     expect(logged).toMatch(/disabled/);
   });
@@ -121,7 +121,7 @@ describe("validateCfToken", () => {
     await expect(validateCfToken()).rejects.toThrow("process.exit:1");
 
     expect(exitSpy).toHaveBeenCalledWith(1);
-    const logged = consoleSpy.mock.calls.map((c) => String(c[0])).join("\n");
+    const logged = consoleSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
     expect(logged).toMatch(/missing the following required permissions/);
     expect(logged).toMatch(/Workers KV Storage/);
   });
