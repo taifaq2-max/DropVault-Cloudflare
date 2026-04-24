@@ -74,7 +74,8 @@ R2_BUCKET_NAME = "vaultdrop-shares-staging"
 
 [[env.staging.kv_namespaces]]
 binding = "SHARE_KV"
-id = "REPLACE_WITH_STAGING_KV_ID"
+id = "692b839c536f4438b9afd7cc0e8f3c0d"
+preview_id = "b4360028ac6849f193e889484b980552"
 
 [[env.staging.r2_buckets]]
 binding = "SHARE_R2"
