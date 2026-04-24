@@ -61,6 +61,21 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: artifacts/ephemeral-share/dist
 
+      - name: Validate downloaded dist artifact
+        id: validate-artifact
+        run: |
+          DIST_DIR="artifacts/ephemeral-share/dist"
+          if [ ! -d "$DIST_DIR" ]; then
+            echo "::error::Dist directory '$DIST_DIR' does not exist. The CI artifact may have expired or failed to download."
+            exit 1
+          fi
+          FILE_COUNT=$(find "$DIST_DIR" -type f | wc -l)
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            echo "::error::Dist directory '$DIST_DIR' is empty. The CI artifact may have expired or the upload step produced no files."
+            exit 1
+          fi
+          echo "Artifact validation passed: $FILE_COUNT file(s) found in $DIST_DIR."
+
       - name: Check required staging secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
