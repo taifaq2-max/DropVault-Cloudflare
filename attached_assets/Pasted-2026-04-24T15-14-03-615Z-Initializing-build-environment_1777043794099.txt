@@ -1,0 +1,131 @@
+2026-04-24T15:14:03.615Z	Initializing build environment...
+2026-04-24T15:14:05.119Z	Success: Finished initializing build environment
+2026-04-24T15:14:05.710Z	Cloning repository...
+2026-04-24T15:14:07.259Z	Detected the following tools from environment: pnpm@10.11.1, nodejs@22.16.0
+2026-04-24T15:14:07.261Z	Installing project dependencies: pnpm install --frozen-lockfile
+2026-04-24T15:14:08.346Z	Scope: all 10 workspace projects
+2026-04-24T15:14:08.477Z	Lockfile is up to date, resolution step is skipped
+2026-04-24T15:14:08.541Z	Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-04-24T15:14:08.669Z	Packages: +645
+2026-04-24T15:14:08.671Z	++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2026-04-24T15:14:09.535Z	Progress: resolved 645, reused 0, downloaded 9, added 0
+2026-04-24T15:14:10.541Z	Progress: resolved 645, reused 0, downloaded 147, added 132
+2026-04-24T15:14:11.536Z	Progress: resolved 645, reused 0, downloaded 216, added 202
+2026-04-24T15:14:12.615Z	Progress: resolved 645, reused 0, downloaded 258, added 245
+2026-04-24T15:14:13.616Z	Progress: resolved 645, reused 0, downloaded 273, added 258
+2026-04-24T15:14:14.620Z	Progress: resolved 645, reused 0, downloaded 349, added 349
+2026-04-24T15:14:15.620Z	Progress: resolved 645, reused 0, downloaded 434, added 423
+2026-04-24T15:14:16.645Z	Progress: resolved 645, reused 0, downloaded 446, added 434
+2026-04-24T15:14:17.646Z	Progress: resolved 645, reused 0, downloaded 448, added 434
+2026-04-24T15:14:18.645Z	Progress: resolved 645, reused 0, downloaded 450, added 434
+2026-04-24T15:14:19.646Z	Progress: resolved 645, reused 0, downloaded 495, added 483
+2026-04-24T15:14:20.648Z	Progress: resolved 645, reused 0, downloaded 604, added 594
+2026-04-24T15:14:21.422Z	Progress: resolved 645, reused 0, downloaded 645, added 645, done
+2026-04-24T15:14:21.714Z	.../node_modules/workerd postinstall$ node install.js
+2026-04-24T15:14:21.716Z	.../sharp@0.34.5/node_modules/sharp install$ node install/check.js || npm run build
+2026-04-24T15:14:21.717Z	.../esbuild@0.27.3/node_modules/esbuild postinstall$ node install.js
+2026-04-24T15:14:21.951Z	.../node_modules/workerd postinstall: Done
+2026-04-24T15:14:21.962Z	.../esbuild@0.27.3/node_modules/esbuild postinstall: Done
+2026-04-24T15:14:21.985Z	.../sharp@0.34.5/node_modules/sharp install: Done
+2026-04-24T15:14:22.728Z	
+2026-04-24T15:14:22.729Z	dependencies:
+2026-04-24T15:14:22.729Z	+ @replit/connectors-sdk 0.4.0
+2026-04-24T15:14:22.729Z	
+2026-04-24T15:14:22.729Z	devDependencies:
+2026-04-24T15:14:22.729Z	+ prettier 3.8.1
+2026-04-24T15:14:22.729Z	+ typescript 5.9.3
+2026-04-24T15:14:22.729Z	
+2026-04-24T15:14:22.778Z	. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+2026-04-24T15:14:22.793Z	. preinstall: Done
+2026-04-24T15:14:22.931Z	Done in 15.2s
+2026-04-24T15:14:23.167Z	Executing user build command: npm run build
+2026-04-24T15:14:23.516Z	
+2026-04-24T15:14:23.516Z	> workspace@0.0.0 build
+2026-04-24T15:14:23.516Z	> pnpm run typecheck && pnpm -r --if-present run build
+2026-04-24T15:14:23.516Z	
+2026-04-24T15:14:23.907Z	
+2026-04-24T15:14:23.907Z	> workspace@0.0.0 typecheck /opt/buildhome/repo
+2026-04-24T15:14:23.907Z	> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+2026-04-24T15:14:23.907Z	
+2026-04-24T15:14:24.334Z	
+2026-04-24T15:14:24.335Z	> workspace@0.0.0 typecheck:libs /opt/buildhome/repo
+2026-04-24T15:14:24.335Z	> tsc --build
+2026-04-24T15:14:24.335Z	
+2026-04-24T15:14:28.839Z	Scope: 5 of 10 workspace projects
+2026-04-24T15:14:28.842Z	artifacts/cloudflare typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:28.843Z	artifacts/ephemeral-share typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:28.843Z	artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:28.844Z	artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:35.105Z	artifacts/api-server typecheck: Done
+2026-04-24T15:14:35.114Z	scripts typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:03.615Z	Initializing build environment...
+2026-04-24T15:14:05.119Z	Success: Finished initializing build environment
+2026-04-24T15:14:05.710Z	Cloning repository...
+2026-04-24T15:14:07.259Z	Detected the following tools from environment: pnpm@10.11.1, nodejs@22.16.0
+2026-04-24T15:14:07.261Z	Installing project dependencies: pnpm install --frozen-lockfile
+2026-04-24T15:14:08.346Z	Scope: all 10 workspace projects
+2026-04-24T15:14:08.477Z	Lockfile is up to date, resolution step is skipped
+2026-04-24T15:14:08.541Z	Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-04-24T15:14:08.669Z	Packages: +645
+2026-04-24T15:14:08.671Z	++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2026-04-24T15:14:09.535Z	Progress: resolved 645, reused 0, downloaded 9, added 0
+2026-04-24T15:14:10.541Z	Progress: resolved 645, reused 0, downloaded 147, added 132
+2026-04-24T15:14:11.536Z	Progress: resolved 645, reused 0, downloaded 216, added 202
+2026-04-24T15:14:12.615Z	Progress: resolved 645, reused 0, downloaded 258, added 245
+2026-04-24T15:14:13.616Z	Progress: resolved 645, reused 0, downloaded 273, added 258
+2026-04-24T15:14:14.620Z	Progress: resolved 645, reused 0, downloaded 349, added 349
+2026-04-24T15:14:15.620Z	Progress: resolved 645, reused 0, downloaded 434, added 423
+2026-04-24T15:14:16.645Z	Progress: resolved 645, reused 0, downloaded 446, added 434
+2026-04-24T15:14:17.646Z	Progress: resolved 645, reused 0, downloaded 448, added 434
+2026-04-24T15:14:18.645Z	Progress: resolved 645, reused 0, downloaded 450, added 434
+2026-04-24T15:14:19.646Z	Progress: resolved 645, reused 0, downloaded 495, added 483
+2026-04-24T15:14:20.648Z	Progress: resolved 645, reused 0, downloaded 604, added 594
+2026-04-24T15:14:21.422Z	Progress: resolved 645, reused 0, downloaded 645, added 645, done
+2026-04-24T15:14:21.714Z	.../node_modules/workerd postinstall$ node install.js
+2026-04-24T15:14:21.716Z	.../sharp@0.34.5/node_modules/sharp install$ node install/check.js || npm run build
+2026-04-24T15:14:21.717Z	.../esbuild@0.27.3/node_modules/esbuild postinstall$ node install.js
+2026-04-24T15:14:21.951Z	.../node_modules/workerd postinstall: Done
+2026-04-24T15:14:21.962Z	.../esbuild@0.27.3/node_modules/esbuild postinstall: Done
+2026-04-24T15:14:21.985Z	.../sharp@0.34.5/node_modules/sharp install: Done
+2026-04-24T15:14:22.728Z	
+2026-04-24T15:14:22.729Z	dependencies:
+2026-04-24T15:14:22.729Z	+ @replit/connectors-sdk 0.4.0
+2026-04-24T15:14:22.729Z	
+2026-04-24T15:14:22.729Z	devDependencies:
+2026-04-24T15:14:22.729Z	+ prettier 3.8.1
+2026-04-24T15:14:22.729Z	+ typescript 5.9.3
+2026-04-24T15:14:22.729Z	
+2026-04-24T15:14:22.778Z	. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+2026-04-24T15:14:22.793Z	. preinstall: Done
+2026-04-24T15:14:22.931Z	Done in 15.2s
+2026-04-24T15:14:23.167Z	Executing user build command: npm run build
+2026-04-24T15:14:23.516Z	
+2026-04-24T15:14:23.516Z	> workspace@0.0.0 build
+2026-04-24T15:14:23.516Z	> pnpm run typecheck && pnpm -r --if-present run build
+2026-04-24T15:14:23.516Z	
+2026-04-24T15:14:23.907Z	
+2026-04-24T15:14:23.907Z	> workspace@0.0.0 typecheck /opt/buildhome/repo
+2026-04-24T15:14:23.907Z	> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+2026-04-24T15:14:23.907Z	
+2026-04-24T15:14:24.334Z	
+2026-04-24T15:14:24.335Z	> workspace@0.0.0 typecheck:libs /opt/buildhome/repo
+2026-04-24T15:14:24.335Z	> tsc --build
+2026-04-24T15:14:24.335Z	
+2026-04-24T15:14:28.839Z	Scope: 5 of 10 workspace projects
+2026-04-24T15:14:28.842Z	artifacts/cloudflare typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:28.843Z	artifacts/ephemeral-share typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:28.843Z	artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:28.844Z	artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:35.105Z	artifacts/api-server typecheck: Done
+2026-04-24T15:14:35.114Z	scripts typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:14:39.905Z	scripts typecheck: src/__tests__/deploy.token-validation.test.ts(2,33): error TS7016: Could not find a declaration file for module '../../deploy.mjs'. '/opt/buildhome/repo/scripts/deploy.mjs' implicitly has an 'any' type.
+2026-04-24T15:14:39.929Z	scripts typecheck: src/__tests__/deploy.token-validation.test.ts(76,47): error TS7006: Parameter 'c' implicitly has an 'any' type.
+2026-04-24T15:14:39.929Z	scripts typecheck: src/__tests__/deploy.token-validation.test.ts(91,47): error TS7006: Parameter 'c' implicitly has an 'any' type.
+2026-04-24T15:14:39.929Z	scripts typecheck: src/__tests__/deploy.token-validation.test.ts(124,47): error TS7006: Parameter 'c' implicitly has an 'any' type.
+2026-04-24T15:14:39.936Z	scripts typecheck: src/__tests__/deployConfig.test.ts(7,52): error TS7016: Could not find a declaration file for module '../../deploy.mjs'. '/opt/buildhome/repo/scripts/deploy.mjs' implicitly has an 'any' type.
+2026-04-24T15:14:40.050Z	scripts typecheck: Failed
+2026-04-24T15:14:40.055Z	/opt/buildhome/repo/scripts:
+2026-04-24T15:14:40.055Z	 ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL  @workspace/scripts@0.0.0 typecheck: `tsc -p tsconfig.json --noEmit`
+2026-04-24T15:14:40.056Z	Exit status 2
+2026-04-24T15:14:40.116Z	 ELIFECYCLE  Command failed with exit code 2.
+2026-04-24T15:14:40.177Z	Failed: error occurred while running build command
