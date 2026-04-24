@@ -1,4 +1,4 @@
-name = "vaultdrop-api"
+name = "dropvault"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
@@ -65,7 +65,7 @@ new_classes = ["ShareAccessGate", "NonceStore", "RateLimiter"]
 # Staging environment (optional)
 # ---------------------------------------------------------------------------
 [env.staging]
-name = "vaultdrop-api-staging"
+name = "dropvault-staging"
 
 [env.staging.vars]
 FRONTEND_URL = "https://dropvault-staging.pages.dev"
