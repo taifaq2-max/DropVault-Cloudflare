@@ -598,6 +598,16 @@ async function main() {
     `secret management and deployments.\n`,
   );
 
+  if (process.argv.includes("--help") || process.argv.includes("-h")) {
+    console.log(
+      `\n${bold("Usage:")} node scripts/deploy.mjs [options]\n\n` +
+      `${bold("Options:")}\n` +
+      `  ${cyan("--reset-config")}   Delete the saved .deploy.config.json and start fresh\n` +
+      `  ${cyan("--help")}, ${cyan("-h")}      Show this help message and exit\n`,
+    );
+    process.exit(0);
+  }
+
   const resetConfig = process.argv.includes("--reset-config");
   if (resetConfig) {
     try {
