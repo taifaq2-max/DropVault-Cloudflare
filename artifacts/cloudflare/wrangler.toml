@@ -14,7 +14,7 @@ FRONTEND_URL = ""
 # Optional: Cloudflare Account ID for R2 presigned URL generation.
 # Find yours at: https://dash.cloudflare.com → right sidebar.
 # Required for the large-file (>4 MB) R2 direct-upload flow.
-CLOUDFLARE_ACCOUNT_ID = ""
+CLOUDFLARE_ACCOUNT_ID = "afa9b88dd463bd146aae514d6e80dc17"
 
 # R2 bucket name (must match the [[r2_buckets]] bucket_name below).
 R2_BUCKET_NAME = "vaultdrop-shares"

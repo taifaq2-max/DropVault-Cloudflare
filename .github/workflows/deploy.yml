@@ -95,7 +95,9 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
         run: |
           set -o pipefail
-          pnpm exec wrangler deploy 2>&1 | tee /tmp/worker-deploy.log
+          pnpm exec wrangler deploy \
+            --var FRONTEND_URL:https://${{ secrets.CF_PAGES_PROJECT }}.pages.dev \
+            2>&1 | tee /tmp/worker-deploy.log
           WORKER_URL=$(grep -oE 'https://[^ ]+\.workers\.dev[^ ]*' /tmp/worker-deploy.log | tail -1 || true)
           if [ -n "$WORKER_URL" ]; then
             echo "worker_url=$WORKER_URL" >> $GITHUB_OUTPUT

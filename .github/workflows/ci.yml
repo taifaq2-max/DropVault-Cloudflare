@@ -55,14 +55,6 @@ jobs:
           VITE_USE_R2_UPLOADS: ${{ secrets.VITE_USE_R2_UPLOADS }}
         run: pnpm build
 
-      - name: Upload dist artifact
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
-        uses: actions/upload-artifact@v4
-        with:
-          name: ephemeral-share-dist-${{ github.ref_name }}
-          path: artifacts/ephemeral-share/dist
-          retention-days: 1
-
       - name: Test
         run: pnpm test
 
@@ -74,6 +66,14 @@ jobs:
 
       - name: Test staging-bootstrap.sh dry-run
         run: bash tests/staging-bootstrap-dry-run.sh
+
+      - name: Upload dist artifact
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ephemeral-share-dist-${{ github.ref_name }}
+          path: artifacts/ephemeral-share/dist
+          retention-days: 1
 
   notify-slack-on-failure:
     name: Notify Slack on CI failure
