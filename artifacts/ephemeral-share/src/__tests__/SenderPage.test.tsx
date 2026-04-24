@@ -1251,6 +1251,65 @@ describe("SenderPage — file size limit enforcement", () => {
     expect(screen.getByRole("alert")).toHaveTextContent(/Total payload exceeds/i);
   });
 
+  it("shows a 'Total payload exceeds' error when many small files added across multiple events cumulatively exceed 420 MB", async () => {
+    const { container } = render(React.createElement(SenderPage));
+
+    const filesTab = screen.getByRole("button", { name: /^files$/i });
+    await act(async () => {
+      fireEvent.click(filesTab);
+    });
+
+    const fileInput = container.querySelector(
+      'input[type="file"]'
+    ) as HTMLInputElement;
+
+    // Helper: build N mock files each with a given byte size.
+    function makeMockFiles(count: number, sizeBytes: number, prefix: string) {
+      return Array.from({ length: count }, (_, i) => {
+        const f = new File([], `${prefix}-${i}.bin`, {
+          type: "application/octet-stream",
+        });
+        Object.defineProperty(f, "size", {
+          value: sizeBytes,
+          configurable: true,
+        });
+        return f;
+      });
+    }
+
+    // First batch: 5 files × 42 MB = 210 MB — under the cap on its own.
+    const firstBatch = makeMockFiles(5, 42 * 1024 * 1024, "batch-a");
+    Object.defineProperty(fileInput, "files", {
+      value: firstBatch,
+      configurable: true,
+    });
+    await act(async () => {
+      fireEvent.change(fileInput);
+    });
+
+    // After the first batch alone, no size-limit error should be present.
+    expect(screen.queryByText(/Total payload exceeds/i)).not.toBeInTheDocument();
+
+    // Second batch: 5 files × 42.1 MB ≈ 210.5 MB — combined with the first
+    // batch (≈ 420.5 MB total) this exceeds the 420 MB cap.
+    const secondBatch = makeMockFiles(
+      5,
+      Math.ceil(42.1 * 1024 * 1024),
+      "batch-b"
+    );
+    Object.defineProperty(fileInput, "files", {
+      value: secondBatch,
+      configurable: true,
+    });
+    await act(async () => {
+      fireEvent.change(fileInput);
+    });
+
+    // The cumulative size now exceeds the 420 MB cap — error must appear.
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(/Total payload exceeds/i);
+  });
+
   it("shows a 'Total payload exceeds' error when two files whose combined size exceeds 420 MB are added", async () => {
     const { container } = render(React.createElement(SenderPage));
 
