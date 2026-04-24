@@ -43,6 +43,15 @@ assert_exit_zero() {
   fi
 }
 
+assert_exit_nonzero() {
+  local label="$1" code="$2"
+  if [[ "$code" -ne 0 ]]; then
+    _pass "$label"
+  else
+    _fail "$label (exit code was 0, expected non-zero)"
+  fi
+}
+
 assert_file_empty() {
   local label="$1" file="$2"
   if [[ ! -s "$file" ]]; then
@@ -394,6 +403,152 @@ assert_contains "[A] closing no-changes notice present" \
 # 16. Neither wrangler nor curl were actually invoked
 assert_file_empty "[A] wrangler was not invoked (PATH or absolute path)" "$INVOCATION_LOG"
 assert_file_empty "[A] curl was not invoked"                             "$INVOCATION_LOG"
+
+# =============================================================================
+# Scenario 3 — Bad inputs: script must exit non-zero before anything runs
+# =============================================================================
+
+# Reset the invocation log between scenarios so leakage is caught per-scenario.
+> "$INVOCATION_LOG"
+
+# ── 3a: Invalid routing option ────────────────────────────────────────────────
+# Prompts until die():
+#   1. Cloudflare Account ID
+#   2. Cloudflare API Token
+#   3. Worker name            (Enter → default)
+#   4. R2 bucket name         (Enter → default)
+#   5. Pages project name     (Enter → default)
+#   6. Routing option         → X  (invalid → die)
+#
+# Note: inputs are written to a temp file rather than stored in a variable so
+# that trailing empty lines are preserved (command substitution strips them).
+
+echo
+echo "=== Scenario 3a: Invalid routing option ==="
+echo "Running: bash deploy.sh --dry-run"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+printf '%s\n' \
+  "acct-12345678" \
+  "fake-api-token" \
+  "" \
+  "" \
+  "" \
+  "X" \
+  > "$TMP_DIR/input_3a"
+
+OUTPUT_3A=""
+EXIT_3A=0
+OUTPUT_3A=$(PATH="$FAKE_BIN:$PATH" bash "$REPO_ROOT/deploy.sh" --dry-run \
+  < "$TMP_DIR/input_3a" 2>&1) || EXIT_3A=$?
+
+echo "$OUTPUT_3A"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+
+echo "Assertions (Scenario 3a — Invalid routing option):"
+
+assert_exit_nonzero "[3a] exit code is non-zero" "$EXIT_3A"
+assert_contains      "[3a] error message mentions valid choices" \
+  "Enter A or B." "$OUTPUT_3A"
+assert_file_empty    "[3a] wrangler was not invoked" "$INVOCATION_LOG"
+assert_file_empty    "[3a] curl was not invoked"     "$INVOCATION_LOG"
+
+# ── 3b: Empty custom domain with Option A ────────────────────────────────────
+# Prompts until die():
+#   1. Cloudflare Account ID
+#   2. Cloudflare API Token
+#   3. Worker name            (Enter → default)
+#   4. R2 bucket name         (Enter → default)
+#   5. Pages project name     (Enter → default)
+#   6. Routing option         → A
+#   7. Custom domain          → "" (empty → die)
+
+> "$INVOCATION_LOG"
+
+echo
+echo "=== Scenario 3b: Empty custom domain (Option A) ==="
+echo "Running: bash deploy.sh --dry-run"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+printf '%s\n' \
+  "acct-12345678" \
+  "fake-api-token" \
+  "" \
+  "" \
+  "" \
+  "A" \
+  "" \
+  > "$TMP_DIR/input_3b"
+
+OUTPUT_3B=""
+EXIT_3B=0
+OUTPUT_3B=$(PATH="$FAKE_BIN:$PATH" bash "$REPO_ROOT/deploy.sh" --dry-run \
+  < "$TMP_DIR/input_3b" 2>&1) || EXIT_3B=$?
+
+echo "$OUTPUT_3B"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+
+echo "Assertions (Scenario 3b — Empty custom domain):"
+
+assert_exit_nonzero "[3b] exit code is non-zero" "$EXIT_3B"
+assert_contains      "[3b] error message mentions custom domain requirement" \
+  "Custom domain is required for Option A." "$OUTPUT_3B"
+assert_file_empty    "[3b] wrangler was not invoked" "$INVOCATION_LOG"
+assert_file_empty    "[3b] curl was not invoked"     "$INVOCATION_LOG"
+
+# ── 3c: ENABLE_R2=Y but empty R2 credentials ─────────────────────────────────
+# Prompts until die():
+#   1. Cloudflare Account ID
+#   2. Cloudflare API Token
+#   3. Worker name            (Enter → default)
+#   4. R2 bucket name         (Enter → default)
+#   5. Pages project name     (Enter → default)
+#   6. Routing option         → B  (no custom domain needed)
+#   7. SESSION_SECRET         (Enter → auto-generate)
+#   8. hCaptcha secret key    (Enter → skip)
+#   9. Enable large-file R2 uploads? → Y
+#  10. R2 Access Key ID       → "" (empty)
+#  11. R2 Secret Access Key   → "" (empty → die: both required)
+
+> "$INVOCATION_LOG"
+
+echo
+echo "=== Scenario 3c: Missing R2 credentials (ENABLE_R2=Y, empty keys) ==="
+echo "Running: bash deploy.sh --dry-run"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+printf '%s\n' \
+  "acct-12345678" \
+  "fake-api-token" \
+  "" \
+  "" \
+  "" \
+  "B" \
+  "" \
+  "" \
+  "Y" \
+  "" \
+  "" \
+  > "$TMP_DIR/input_3c"
+
+OUTPUT_3C=""
+EXIT_3C=0
+OUTPUT_3C=$(PATH="$FAKE_BIN:$PATH" bash "$REPO_ROOT/deploy.sh" --dry-run \
+  < "$TMP_DIR/input_3c" 2>&1) || EXIT_3C=$?
+
+echo "$OUTPUT_3C"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+
+echo "Assertions (Scenario 3c — Missing R2 credentials):"
+
+assert_exit_nonzero "[3c] exit code is non-zero" "$EXIT_3C"
+assert_contains      "[3c] error message mentions R2 credentials requirement" \
+  "Both R2 credentials are required when large-file uploads are enabled." "$OUTPUT_3C"
+assert_file_empty    "[3c] wrangler was not invoked" "$INVOCATION_LOG"
+assert_file_empty    "[3c] curl was not invoked"     "$INVOCATION_LOG"
 
 # ── summary ──────────────────────────────────────────────────────────────────
 
