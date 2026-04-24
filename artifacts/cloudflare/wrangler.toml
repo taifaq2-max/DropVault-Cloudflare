@@ -9,7 +9,7 @@ compatibility_flags = ["nodejs_compat"]
 [vars]
 # FRONTEND_URL is required for CORS. Set to your Pages domain or custom domain.
 # Example: FRONTEND_URL = "https://vaultdrop.example.com"
-FRONTEND_URL = ""
+FRONTEND_URL = "https://vaultdrop.pages.dev"
 
 # Optional: Cloudflare Account ID for R2 presigned URL generation.
 # Find yours at: https://dash.cloudflare.com → right sidebar.
