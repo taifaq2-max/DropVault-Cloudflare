@@ -5,7 +5,7 @@
   "private": true,
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "echo 'mockup-sandbox is a Replit-only dev tool; skipping production build'",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
