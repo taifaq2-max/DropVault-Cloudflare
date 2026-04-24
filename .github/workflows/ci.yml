@@ -75,6 +75,33 @@ jobs:
       - name: Test staging-bootstrap.sh dry-run
         run: bash tests/staging-bootstrap-dry-run.sh
 
+  notify-slack-on-failure:
+    name: Notify Slack on CI failure
+    runs-on: ubuntu-latest
+    needs: ci
+    if: ${{ always() && needs.ci.result == 'failure' }}
+
+    steps:
+      - name: Notify Slack on CI failure
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        uses: slackapi/slack-github-action@v2
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            {
+              "text": "*CI failed* :x:",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*CI failed* :x:\n*Workflow:* ${{ github.workflow }}\n*Branch:* `${{ github.head_ref || github.ref_name }}`\n*Commit:* `${{ github.sha }}`\n*Triggered by:* `${{ github.event_name }}`\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow>"
+                  }
+                }
+              ]
+            }
+
   notify-on-failure:
     name: Email on scheduled failure
     runs-on: ubuntu-latest
