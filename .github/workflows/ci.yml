@@ -68,6 +68,9 @@ jobs:
       - name: Test deploy.sh dry-run
         run: bash tests/deploy-dry-run.sh
 
+      - name: Test staging-bootstrap.sh dry-run
+        run: bash tests/staging-bootstrap-dry-run.sh
+
   notify-on-failure:
     name: Email on scheduled failure
     runs-on: ubuntu-latest
