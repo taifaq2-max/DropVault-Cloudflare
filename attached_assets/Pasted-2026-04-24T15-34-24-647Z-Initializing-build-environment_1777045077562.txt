@@ -1,0 +1,146 @@
+2026-04-24T15:34:24.647Z	Initializing build environment...
+2026-04-24T15:34:27.039Z	Success: Finished initializing build environment
+2026-04-24T15:34:27.853Z	Cloning repository...
+2026-04-24T15:34:30.270Z	Detected the following tools from environment: pnpm@10.11.1, nodejs@22.16.0
+2026-04-24T15:34:30.273Z	Installing project dependencies: pnpm install --frozen-lockfile
+2026-04-24T15:34:32.124Z	Scope: all 10 workspace projects
+2026-04-24T15:34:32.279Z	Lockfile is up to date, resolution step is skipped
+2026-04-24T15:34:32.535Z	Progress: resolved 1, reused 0, downloaded 0, added 0
+2026-04-24T15:34:32.688Z	Packages: +645
+2026-04-24T15:34:32.690Z	++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2026-04-24T15:34:33.537Z	Progress: resolved 645, reused 0, downloaded 11, added 0
+2026-04-24T15:34:34.538Z	Progress: resolved 645, reused 0, downloaded 85, added 81
+2026-04-24T15:34:35.542Z	Progress: resolved 645, reused 0, downloaded 169, added 158
+2026-04-24T15:34:36.548Z	Progress: resolved 645, reused 0, downloaded 220, added 209
+2026-04-24T15:34:37.549Z	Progress: resolved 645, reused 0, downloaded 251, added 239
+2026-04-24T15:34:38.549Z	Progress: resolved 645, reused 0, downloaded 267, added 253
+2026-04-24T15:34:39.835Z	Progress: resolved 645, reused 0, downloaded 268, added 253
+2026-04-24T15:34:40.828Z	Progress: resolved 645, reused 0, downloaded 355, added 351
+2026-04-24T15:34:41.829Z	Progress: resolved 645, reused 0, downloaded 410, added 396
+2026-04-24T15:34:42.829Z	Progress: resolved 645, reused 0, downloaded 434, added 420
+2026-04-24T15:34:43.831Z	Progress: resolved 645, reused 0, downloaded 441, added 432
+2026-04-24T15:34:44.832Z	Progress: resolved 645, reused 0, downloaded 448, added 434
+2026-04-24T15:34:45.835Z	Progress: resolved 645, reused 0, downloaded 449, added 434
+2026-04-24T15:34:46.835Z	Progress: resolved 645, reused 0, downloaded 476, added 461
+2026-04-24T15:34:47.838Z	Progress: resolved 645, reused 0, downloaded 548, added 536
+2026-04-24T15:34:48.838Z	Progress: resolved 645, reused 0, downloaded 626, added 615
+2026-04-24T15:34:49.544Z	Progress: resolved 645, reused 0, downloaded 645, added 645, done
+2026-04-24T15:34:50.018Z	.../esbuild@0.27.3/node_modules/esbuild postinstall$ node install.js
+2026-04-24T15:34:50.022Z	.../sharp@0.34.5/node_modules/sharp install$ node install/check.js || npm run build
+2026-04-24T15:34:50.025Z	.../node_modules/workerd postinstall$ node install.js
+2026-04-24T15:34:50.827Z	.../esbuild@0.27.3/node_modules/esbuild postinstall: Done
+2026-04-24T15:34:50.844Z	.../node_modules/workerd postinstall: Done
+2026-04-24T15:34:51.004Z	.../sharp@0.34.5/node_modules/sharp install: Done
+2026-04-24T15:34:52.159Z	
+2026-04-24T15:34:52.160Z	dependencies:
+2026-04-24T15:34:52.161Z	+ @replit/connectors-sdk 0.4.0
+2026-04-24T15:34:52.161Z	
+2026-04-24T15:34:52.161Z	devDependencies:
+2026-04-24T15:34:52.163Z	+ prettier 3.8.1
+2026-04-24T15:34:52.163Z	+ typescript 5.9.3
+2026-04-24T15:34:52.163Z	
+2026-04-24T15:34:52.249Z	. preinstall$ sh -c 'rm -f package-lock.json yarn.lock; case "$npm_config_user_agent" in pnpm/*) ;; *) echo "Use pnpm instead" >&2; exit 1 ;; esac'
+2026-04-24T15:34:52.275Z	. preinstall: Done
+2026-04-24T15:34:52.474Z	Done in 21.3s
+2026-04-24T15:34:53.065Z	Executing user build command: npm run build
+2026-04-24T15:34:53.597Z	
+2026-04-24T15:34:53.597Z	> workspace@0.0.0 build
+2026-04-24T15:34:53.597Z	> pnpm run typecheck && pnpm -r --if-present run build
+2026-04-24T15:34:53.597Z	
+2026-04-24T15:34:54.120Z	
+2026-04-24T15:34:54.123Z	> workspace@0.0.0 typecheck /opt/buildhome/repo
+2026-04-24T15:34:54.123Z	> pnpm run typecheck:libs && pnpm -r --filter "./artifacts/**" --filter "./scripts" --if-present run typecheck
+2026-04-24T15:34:54.123Z	
+2026-04-24T15:34:54.866Z	
+2026-04-24T15:34:54.866Z	> workspace@0.0.0 typecheck:libs /opt/buildhome/repo
+2026-04-24T15:34:54.867Z	> tsc --build
+2026-04-24T15:34:54.867Z	
+2026-04-24T15:35:00.958Z	Scope: 5 of 10 workspace projects
+2026-04-24T15:35:00.964Z	artifacts/api-server typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:35:00.965Z	artifacts/cloudflare typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:35:00.967Z	artifacts/ephemeral-share typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:35:00.967Z	artifacts/mockup-sandbox typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:35:08.994Z	artifacts/api-server typecheck: Done
+2026-04-24T15:35:09.016Z	scripts typecheck$ tsc -p tsconfig.json --noEmit
+2026-04-24T15:35:15.873Z	scripts typecheck: Done
+2026-04-24T15:35:16.673Z	artifacts/cloudflare typecheck: Done
+2026-04-24T15:35:22.380Z	artifacts/mockup-sandbox typecheck: Done
+2026-04-24T15:35:23.915Z	artifacts/ephemeral-share typecheck: Done
+2026-04-24T15:35:24.556Z	Scope: 9 of 10 workspace projects
+2026-04-24T15:35:24.562Z	lib/api-client-react build$ tsc --build
+2026-04-24T15:35:24.563Z	artifacts/mockup-sandbox build$ echo 'mockup-sandbox is a Replit-only dev tool; skipping production build'
+2026-04-24T15:35:24.581Z	artifacts/mockup-sandbox build: mockup-sandbox is a Replit-only dev tool; skipping production build
+2026-04-24T15:35:24.583Z	artifacts/mockup-sandbox build: Done
+2026-04-24T15:35:24.726Z	lib/api-client-react build: Done
+2026-04-24T15:35:24.727Z	artifacts/api-server build$ node ./build.mjs
+2026-04-24T15:35:24.728Z	artifacts/ephemeral-share build$ vite build --config vite.config.ts
+2026-04-24T15:35:25.379Z	artifacts/api-server build:   dist/index.mjs                       1.4mb ⚠️
+2026-04-24T15:35:25.383Z	artifacts/api-server build:   dist/pino-worker.mjs               153.4kb
+2026-04-24T15:35:25.383Z	artifacts/api-server build:   dist/pino-file.mjs                 142.1kb
+2026-04-24T15:35:25.384Z	artifacts/api-server build:   dist/pino-pretty.mjs               114.6kb
+2026-04-24T15:35:25.384Z	artifacts/api-server build:   dist/thread-stream-worker.mjs        7.3kb
+2026-04-24T15:35:25.384Z	artifacts/api-server build:   dist/index.mjs.map                   2.2mb
+2026-04-24T15:35:25.384Z	artifacts/api-server build:   dist/pino-worker.mjs.map           256.9kb
+2026-04-24T15:35:25.385Z	artifacts/api-server build:   dist/pino-file.mjs.map             229.0kb
+2026-04-24T15:35:25.385Z	artifacts/api-server build:   dist/pino-pretty.mjs.map           203.9kb
+2026-04-24T15:35:25.385Z	artifacts/api-server build:   dist/thread-stream-worker.mjs.map   12.0kb
+2026-04-24T15:35:25.387Z	artifacts/api-server build: ⚡ Done in 499ms
+2026-04-24T15:35:25.389Z	artifacts/api-server build: Done
+2026-04-24T15:35:25.557Z	artifacts/ephemeral-share build: vite v7.3.2 building client environment for production...
+2026-04-24T15:35:25.695Z	artifacts/ephemeral-share build: transforming...
+2026-04-24T15:35:26.398Z	artifacts/ephemeral-share build: src/components/ui/tooltip.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+2026-04-24T15:35:27.447Z	artifacts/ephemeral-share build: src/components/ui/label.tsx (2:0): Error when using sourcemap for reporting an error: Can't resolve original location of error.
+2026-04-24T15:35:32.510Z	artifacts/ephemeral-share build: ✓ 2188 modules transformed.
+2026-04-24T15:35:33.083Z	artifacts/ephemeral-share build: rendering chunks...
+2026-04-24T15:35:33.098Z	artifacts/ephemeral-share build: computing gzip size...
+2026-04-24T15:35:33.175Z	artifacts/ephemeral-share build: dist/public/index.html                   0.74 kB │ gzip:   0.42 kB
+2026-04-24T15:35:33.177Z	artifacts/ephemeral-share build: dist/public/assets/index-qUpQNQ3w.css   98.55 kB │ gzip:  16.04 kB
+2026-04-24T15:35:33.183Z	artifacts/ephemeral-share build: dist/public/assets/index-C-KoLCGB.js   612.59 kB │ gzip: 195.37 kB
+2026-04-24T15:35:33.183Z	artifacts/ephemeral-share build: ✓ built in 7.55s
+2026-04-24T15:35:33.183Z	artifacts/ephemeral-share build: 
+2026-04-24T15:35:33.183Z	artifacts/ephemeral-share build: (!) Some chunks are larger than 500 kB after minification. Consider:
+2026-04-24T15:35:33.183Z	artifacts/ephemeral-share build: - Using dynamic import() to code-split the application
+2026-04-24T15:35:33.184Z	artifacts/ephemeral-share build: - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+2026-04-24T15:35:33.186Z	artifacts/ephemeral-share build: - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+2026-04-24T15:35:33.284Z	artifacts/ephemeral-share build: Done
+2026-04-24T15:35:33.338Z	Success: Build command completed
+2026-04-24T15:35:33.514Z	Executing user deploy command: npx wrangler versions upload
+2026-04-24T15:35:36.053Z	npm warn exec The following package was not found and will be installed: wrangler@4.85.0
+2026-04-24T15:35:54.787Z	
+2026-04-24T15:35:54.787Z	 ⛅️ wrangler 4.85.0
+2026-04-24T15:35:54.788Z	───────────────────
+2026-04-24T15:35:54.862Z	
+2026-04-24T15:35:54.935Z	✘ [ERROR] Missing entry-point to Worker script or to assets directory
+2026-04-24T15:35:54.935Z	
+2026-04-24T15:35:54.935Z	  
+2026-04-24T15:35:54.935Z	  If there is code to deploy, you can either:
+2026-04-24T15:35:54.936Z	  - Specify an entry-point to your Worker script via the command line (ex: `npx wrangler versions upload src/index.ts`)
+2026-04-24T15:35:54.936Z	  - Or create a "wrangler.jsonc" file containing:
+2026-04-24T15:35:54.936Z	  
+2026-04-24T15:35:54.936Z	  ```
+2026-04-24T15:35:54.936Z	  {
+2026-04-24T15:35:54.936Z	    "name": "worker-name",
+2026-04-24T15:35:54.937Z	    "compatibility_date": "2026-04-24",
+2026-04-24T15:35:54.937Z	    "main": "src/index.ts"
+2026-04-24T15:35:54.937Z	  }
+2026-04-24T15:35:54.937Z	  ```
+2026-04-24T15:35:54.937Z	  
+2026-04-24T15:35:54.937Z	  
+2026-04-24T15:35:54.937Z	  If are uploading a directory of assets, you can either:
+2026-04-24T15:35:54.937Z	  - Specify the path to the directory of assets via the command line: (ex: `npx wrangler versions upload --assets=./dist`)
+2026-04-24T15:35:54.937Z	  - Or create a "wrangler.jsonc" file containing:
+2026-04-24T15:35:54.937Z	  
+2026-04-24T15:35:54.938Z	  ```
+2026-04-24T15:35:54.938Z	  {
+2026-04-24T15:35:54.938Z	    "name": "worker-name",
+2026-04-24T15:35:54.938Z	    "compatibility_date": "2026-04-24",
+2026-04-24T15:35:54.938Z	    "assets": {
+2026-04-24T15:35:54.938Z	      "directory": "./dist"
+2026-04-24T15:35:54.938Z	    }
+2026-04-24T15:35:54.938Z	  }
+2026-04-24T15:35:54.939Z	  ```
+2026-04-24T15:35:54.939Z	  
+2026-04-24T15:35:54.939Z	
+2026-04-24T15:35:54.940Z	
+2026-04-24T15:35:55.033Z	🪵  Logs were written to "/opt/buildhome/.config/.wrangler/logs/wrangler-2026-04-24_15-35-54_309.log"
+2026-04-24T15:35:55.284Z	Failed: error occurred while running deploy command
