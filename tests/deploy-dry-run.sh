@@ -550,6 +550,72 @@ assert_contains      "[3c] error message mentions R2 credentials requirement" \
 assert_file_empty    "[3c] wrangler was not invoked" "$INVOCATION_LOG"
 assert_file_empty    "[3c] curl was not invoked"     "$INVOCATION_LOG"
 
+# ── 3d: Empty Cloudflare Account ID ──────────────────────────────────────────
+# Prompts until die():
+#   1. Cloudflare Account ID  → "" (empty → die)
+
+> "$INVOCATION_LOG"
+
+echo
+echo "=== Scenario 3d: Empty Cloudflare Account ID ==="
+echo "Running: bash deploy.sh --dry-run"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+printf '%s\n' \
+  "" \
+  > "$TMP_DIR/input_3d"
+
+OUTPUT_3D=""
+EXIT_3D=0
+OUTPUT_3D=$(PATH="$FAKE_BIN:$PATH" bash "$REPO_ROOT/deploy.sh" --dry-run \
+  < "$TMP_DIR/input_3d" 2>&1) || EXIT_3D=$?
+
+echo "$OUTPUT_3D"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+
+echo "Assertions (Scenario 3d — Empty Cloudflare Account ID):"
+
+assert_exit_nonzero "[3d] exit code is non-zero" "$EXIT_3D"
+assert_contains      "[3d] error message mentions Account ID requirement" \
+  "Account ID is required." "$OUTPUT_3D"
+assert_file_empty    "[3d] wrangler was not invoked" "$INVOCATION_LOG"
+assert_file_empty    "[3d] curl was not invoked"     "$INVOCATION_LOG"
+
+# ── 3e: Empty Cloudflare API Token ───────────────────────────────────────────
+# Prompts until die():
+#   1. Cloudflare Account ID  → valid
+#   2. Cloudflare API Token   → "" (empty → die)
+
+> "$INVOCATION_LOG"
+
+echo
+echo "=== Scenario 3e: Empty Cloudflare API Token ==="
+echo "Running: bash deploy.sh --dry-run"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+printf '%s\n' \
+  "acct-12345678" \
+  "" \
+  > "$TMP_DIR/input_3e"
+
+OUTPUT_3E=""
+EXIT_3E=0
+OUTPUT_3E=$(PATH="$FAKE_BIN:$PATH" bash "$REPO_ROOT/deploy.sh" --dry-run \
+  < "$TMP_DIR/input_3e" 2>&1) || EXIT_3E=$?
+
+echo "$OUTPUT_3E"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo
+
+echo "Assertions (Scenario 3e — Empty Cloudflare API Token):"
+
+assert_exit_nonzero "[3e] exit code is non-zero" "$EXIT_3E"
+assert_contains      "[3e] error message mentions API token requirement" \
+  "API token is required." "$OUTPUT_3E"
+assert_file_empty    "[3e] wrangler was not invoked" "$INVOCATION_LOG"
+assert_file_empty    "[3e] curl was not invoked"     "$INVOCATION_LOG"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 
 echo
