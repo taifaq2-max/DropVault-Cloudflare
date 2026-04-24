@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
-    branches: [main]
+    branches: [main, staging]
   schedule:
     - cron: '0 9 * * 1'
 
@@ -52,10 +52,10 @@ jobs:
         run: pnpm build
 
       - name: Upload dist artifact
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/staging')
         uses: actions/upload-artifact@v4
         with:
-          name: ephemeral-share-dist
+          name: ephemeral-share-dist-${{ github.ref_name }}
           path: artifacts/ephemeral-share/dist
           retention-days: 1
 

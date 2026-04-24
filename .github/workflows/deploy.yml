@@ -1,12 +1,10 @@
 name: Deploy to Cloudflare
 
 on:
-  push:
-    branches: [staging]
   workflow_run:
     workflows: [CI]
     types: [completed]
-    branches: [main]
+    branches: [main, staging]
 
 concurrency:
   group: deploy-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
@@ -15,7 +13,7 @@ concurrency:
 jobs:
   deploy-production:
     name: Download & Deploy (production)
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -62,7 +60,7 @@ jobs:
         id: download-artifact
         uses: actions/download-artifact@v4
         with:
-          name: ephemeral-share-dist
+          name: ephemeral-share-dist-main
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: artifacts/ephemeral-share/dist
@@ -183,14 +181,19 @@ jobs:
             }
 
   deploy-staging:
-    name: Test, Build & Deploy (staging)
-    if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+    name: Deploy (staging)
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'staging'
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
 
     steps:
       - name: Checkout repository
         id: checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Set up pnpm
         id: setup-pnpm
@@ -222,16 +225,14 @@ jobs:
         id: install-deps
         run: pnpm install --frozen-lockfile
 
-      - name: Run tests
-        id: run-tests
-        run: pnpm test
-
-      - name: Build frontend
-        id: build-frontend
-        env:
-          VITE_HCAPTCHA_SITE_KEY: ${{ secrets.VITE_HCAPTCHA_SITE_KEY }}
-          VITE_USE_R2_UPLOADS: ${{ secrets.VITE_USE_R2_UPLOADS }}
-        run: pnpm --filter @workspace/ephemeral-share run build
+      - name: Download dist artifact from CI
+        id: download-artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ephemeral-share-dist-staging
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: artifacts/ephemeral-share/dist
 
       - name: Set staging Worker secrets
         id: set-secrets
@@ -329,7 +330,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Staging deploy succeeded* :white_check_mark:\n*Commit:* `${{ github.sha }}`\n*Worker URL:* ${{ steps.deploy-worker.outputs.worker_url || '_(not captured)_' }}\n*Pages URL:* ${{ steps.deploy-pages.outputs.pages_url || '_(not captured)_' }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow>"
+                    "text": "*Staging deploy succeeded* :white_check_mark:\n*Commit:* `${{ github.event.workflow_run.head_sha }}`\n*Worker URL:* ${{ steps.deploy-worker.outputs.worker_url || '_(not captured)_' }}\n*Pages URL:* ${{ steps.deploy-pages.outputs.pages_url || '_(not captured)_' }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow>"
                   }
                 }
               ]
@@ -339,17 +340,16 @@ jobs:
         if: failure()
         run: |
           failed=""
-          [ "${{ steps.checkout.outcome }}"       = "failure" ] && failed="${failed}\n• Checkout repository"
-          [ "${{ steps.setup-pnpm.outcome }}"     = "failure" ] && failed="${failed}\n• Set up pnpm"
-          [ "${{ steps.setup-node.outcome }}"     = "failure" ] && failed="${failed}\n• Set up Node.js"
-          [ "${{ steps.get-pnpm-store.outcome }}" = "failure" ] && failed="${failed}\n• Get pnpm store directory"
-          [ "${{ steps.cache-pnpm.outcome }}"     = "failure" ] && failed="${failed}\n• Cache pnpm store"
-          [ "${{ steps.install-deps.outcome }}"   = "failure" ] && failed="${failed}\n• Install dependencies"
-          [ "${{ steps.run-tests.outcome }}"      = "failure" ] && failed="${failed}\n• Run tests"
-          [ "${{ steps.build-frontend.outcome }}" = "failure" ] && failed="${failed}\n• Build frontend"
-          [ "${{ steps.set-secrets.outcome }}"    = "failure" ] && failed="${failed}\n• Set staging Worker secrets"
-          [ "${{ steps.deploy-worker.outcome }}"  = "failure" ] && failed="${failed}\n• Deploy Worker"
-          [ "${{ steps.deploy-pages.outcome }}"   = "failure" ] && failed="${failed}\n• Deploy frontend to Cloudflare Pages"
+          [ "${{ steps.checkout.outcome }}"         = "failure" ] && failed="${failed}\n• Checkout repository"
+          [ "${{ steps.setup-pnpm.outcome }}"       = "failure" ] && failed="${failed}\n• Set up pnpm"
+          [ "${{ steps.setup-node.outcome }}"       = "failure" ] && failed="${failed}\n• Set up Node.js"
+          [ "${{ steps.get-pnpm-store.outcome }}"   = "failure" ] && failed="${failed}\n• Get pnpm store directory"
+          [ "${{ steps.cache-pnpm.outcome }}"       = "failure" ] && failed="${failed}\n• Cache pnpm store"
+          [ "${{ steps.install-deps.outcome }}"     = "failure" ] && failed="${failed}\n• Install dependencies"
+          [ "${{ steps.download-artifact.outcome }}" = "failure" ] && failed="${failed}\n• Download dist artifact from CI"
+          [ "${{ steps.set-secrets.outcome }}"      = "failure" ] && failed="${failed}\n• Set staging Worker secrets"
+          [ "${{ steps.deploy-worker.outcome }}"    = "failure" ] && failed="${failed}\n• Deploy Worker"
+          [ "${{ steps.deploy-pages.outcome }}"     = "failure" ] && failed="${failed}\n• Deploy frontend to Cloudflare Pages"
           if [ -z "$failed" ]; then
             failed="\n• Unknown step (check the run log)"
           fi
@@ -369,7 +369,7 @@ jobs:
                   "type": "section",
                   "text": {
                     "type": "mrkdwn",
-                    "text": "*Staging deploy failed* :x:\n*Commit:* `${{ github.sha }}`\n*Failed steps:*${{ env.FAILED_STEPS }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow>"
+                    "text": "*Staging deploy failed* :x:\n*Commit:* `${{ github.event.workflow_run.head_sha }}`\n*Failed steps:*${{ env.FAILED_STEPS }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View workflow>"
                   }
                 }
               ]
