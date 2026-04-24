@@ -294,6 +294,30 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           path: artifacts/ephemeral-share/dist
 
+      - name: Check required staging secrets
+        id: check-secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_PAGES_PROJECT_STAGING: ${{ secrets.CF_PAGES_PROJECT_STAGING }}
+          STAGING_SESSION_SECRET: ${{ secrets.STAGING_SESSION_SECRET }}
+          STAGING_HCAPTCHA_SECRET_KEY: ${{ secrets.STAGING_HCAPTCHA_SECRET_KEY }}
+          STAGING_R2_ACCESS_KEY_ID: ${{ secrets.STAGING_R2_ACCESS_KEY_ID }}
+          STAGING_R2_ACCESS_KEY_SECRET: ${{ secrets.STAGING_R2_ACCESS_KEY_SECRET }}
+        run: |
+          missing=()
+          [ -z "$CLOUDFLARE_API_TOKEN" ]         && missing+=(CLOUDFLARE_API_TOKEN)
+          [ -z "$CF_ACCOUNT_ID" ]                && missing+=(CF_ACCOUNT_ID)
+          [ -z "$CF_PAGES_PROJECT_STAGING" ]     && missing+=(CF_PAGES_PROJECT_STAGING)
+          [ -z "$STAGING_SESSION_SECRET" ]       && missing+=(STAGING_SESSION_SECRET)
+          [ -z "$STAGING_HCAPTCHA_SECRET_KEY" ]  && missing+=(STAGING_HCAPTCHA_SECRET_KEY)
+          [ -z "$STAGING_R2_ACCESS_KEY_ID" ]     && missing+=(STAGING_R2_ACCESS_KEY_ID)
+          [ -z "$STAGING_R2_ACCESS_KEY_SECRET" ] && missing+=(STAGING_R2_ACCESS_KEY_SECRET)
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing required staging secrets: ${missing[*]}"
+            exit 1
+          fi
+
       - name: Set staging Worker secrets
         id: set-secrets
         working-directory: artifacts/cloudflare
@@ -311,7 +335,7 @@ jobs:
           [ -z "$STAGING_R2_ACCESS_KEY_ID" ]     && missing+=(STAGING_R2_ACCESS_KEY_ID)
           [ -z "$STAGING_R2_ACCESS_KEY_SECRET" ] && missing+=(STAGING_R2_ACCESS_KEY_SECRET)
           if [ ${#missing[@]} -gt 0 ]; then
-            echo "::error::Missing required staging secrets: ${missing[*]}"
+            echo "::error::Missing required staging Worker secrets: ${missing[*]}"
             exit 1
           fi
           echo "$STAGING_SESSION_SECRET"       | pnpm exec wrangler secret put SESSION_SECRET       --env staging
